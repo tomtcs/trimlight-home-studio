@@ -1,0 +1,6 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {calendarAssignment} from '../shared/calendar-edit.mjs';import {matches} from '../shared/domain.mjs';
+const state={patterns:[{id:'look',name:'Holiday'}],rules:[{id:'base',enabled:true,startDate:'01-01',endDate:'12-31',year:null,priority:110}]};
+const input={start:'2026-12-30',end:'2027-01-02',patternId:'look',kind:'sunset',offset:-15,fixedStart:'17:00',off:'23:00'};
+test('calendar range includes both endpoints across years without affecting other dates',()=>{const rules=calendarAssignment(state,input).slice(1);assert.equal(rules.length,2);for(const key of ['2026-12-30','2026-12-31','2027-01-01','2027-01-02'])assert.equal(rules.filter(r=>matches(r,key)).length,1);for(const key of ['2026-12-29','2027-01-03','2026-01-01'])assert.equal(rules.some(r=>matches(r,key)),false);assert.equal(rules[0].priority,111);assert.equal(state.rules.length,1)});
+test('single days and invalid ranges are handled explicitly',()=>{const r=calendarAssignment(state,{...input,end:input.start}).at(-1);assert.equal(r.startDate,r.endDate);assert.throws(()=>calendarAssignment(state,{...input,end:'2026-12-01'}));assert.throws(()=>calendarAssignment(state,{...input,start:'2026-02-30'}));assert.throws(()=>calendarAssignment({...state,rules:[{...state.rules[0],priority:1000}]},input),/maximum priority/)});
