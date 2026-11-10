@@ -2,7 +2,7 @@
 
 ## Install
 1. Extract the downloadable package on a server with Docker Compose.
-2. Copy `env.example` to `.env` and set `APP_USER` and a unique `APP_PASSWORD` (at least 16 characters). Trimlight credentials do not belong in this file.
+2. Copy `env.example` to `.env` and set `APP_USER` and a unique `APP_PASSWORD` (at least 8 characters). Trimlight credentials do not belong in this file.
 3. Run `docker compose up -d --build` and open `http://YOUR-SERVER:8080`.
 4. Sign in, open **Settings → Trimlight connection**, and enter your API client ID, client secret, and controller device ID. The device ID comes from your Trimlight API/controller export; it is not your client ID. Controller discovery is not included in this release.
 5. Select **Test connection**, then **Test & save**. Saving also tests the credentials. A blank secret keeps the saved secret only when the client ID is unchanged.

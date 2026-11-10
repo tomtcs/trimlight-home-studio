@@ -6,7 +6,7 @@ import {timingSafeEqual} from 'node:crypto';
 import {openDatabase} from './database.mjs';
 import {handleApi,tick,trim,readState} from '../shared/service.mjs';
 const dataDir=process.env.DATA_DIR||'/data';fs.mkdirSync(dataDir,{recursive:true});
-if(!process.env.APP_PASSWORD||process.env.APP_PASSWORD.length<16){console.error('Set APP_PASSWORD to at least 16 characters before starting.');process.exit(1)}
+if(!process.env.APP_PASSWORD||process.env.APP_PASSWORD.length<8){console.error('Set APP_PASSWORD to at least 8 characters before starting.');process.exit(1)}
 const env={...process.env,DB:openDatabase(path.join(dataDir,'roofline.sqlite')),LOCAL_RUNNER:true};
 const credentials=credentialStore(dataDir);configureCredentials(env,credentials);
 const expected=Buffer.from('Basic '+Buffer.from((process.env.APP_USER||'admin')+':'+process.env.APP_PASSWORD).toString('base64'));

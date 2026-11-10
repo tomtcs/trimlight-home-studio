@@ -14,7 +14,7 @@ Requires Docker with Compose.
 
 ```sh
 cp env.example .env
-# Set APP_USER and a unique APP_PASSWORD of at least 16 characters in .env.
+# Set APP_USER and a unique APP_PASSWORD of at least 8 characters in .env.
 docker compose up -d --build
 ```
 
