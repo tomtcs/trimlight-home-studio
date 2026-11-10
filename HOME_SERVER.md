@@ -15,7 +15,7 @@ The browser never receives the saved secret. Re-enter a secret to replace it. **
 
 Older installations with all three `TRIMLIGHT_*` environment values migrate them to encrypted storage on startup. After confirming the saved connection, remove those variables from `.env` and recreate the container. A saved disconnect is respected even if old environment variables remain.
 
-The app uses a server login and serves HTTP internally. Use an HTTPS reverse proxy or VPN for remote access. Do not publish the container port directly to the internet. Each household runs an independent instance; this is not a multi-account hosted service.
+The app uses a server login and serves HTTP internally. Use an HTTPS reverse proxy or VPN for remote access. Do not publish the container port directly to the internet. Each household runs an independent instance; users share one household’s lighting workspace.
 
 ## Scheduling and backups
 The local live scheduler checks rules every 30 seconds and must remain running. It uses Manual Mode for displays, and requests Timer Mode on clean shutdown or disable. A power or network failure can leave the last display active; use the native Trimlight app to resume Timer Mode if necessary.
@@ -26,3 +26,18 @@ Protect and unlock designs with the library lock buttons. Exports include patter
 
 ## Checks
 `npm ci`, `npx vite build --config vite.standalone.config.mjs`, and `node --test tests/*.test.mjs` build and check this self-hosted package. No tests operate physical lights. Photo detection suggests the outer roofline and requires review.
+
+
+## Accounts and roles
+
+The first startup creates an Administrator from APP_USER and APP_PASSWORD. Existing installations migrate automatically without changing lighting data. Once an account exists, these environment variables do not overwrite it. Sign in through the application and open **Account & users** to add users, rename accounts, reset passwords, change roles, or disable access. Every user can change their own password under **Account**; passwords require 8–256 characters.
+
+- Administrator: all features, users, controller connection, sync and household settings.
+- Editor: designs, house maps, schedules and manual light controls. Administrative sync, credentials and household settings remain restricted.
+- Viewer: read-only access to the shared household workspace. Server rejects changes and controller commands.
+
+Sessions expire after eight hours. Logout invalidates the current session; password changes and administrator account edits invalidate all sessions for that user. At least one active administrator must remain. Disabled accounts retain their identity and can be re-enabled.
+
+Accounts, salted scrypt password hashes and hashed session tokens reside in the existing SQLite data volume. Back up the volume, not only the lighting export, to preserve accounts. Keep the named volume when rebuilding. APP_PASSWORD is only used to bootstrap an empty user database.
+
+For HTTPS deployments set COOKIE_SECURE=true in .env so session cookies are HTTPS-only. Leave it unset for local HTTP access. This account system applies to the self-hosted Docker application; the hosted ChatGPT version continues to use its own sign-in system.

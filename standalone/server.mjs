@@ -2,24 +2,32 @@ import http from 'node:http';
 import {credentialStore,configureCredentials,credentialsApi} from './credentials.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
-import {timingSafeEqual} from 'node:crypto';
+import {createAuth,authorize} from './auth.mjs';
 import {openDatabase} from './database.mjs';
 import {handleApi,tick,trim,readState} from '../shared/service.mjs';
 const dataDir=process.env.DATA_DIR||'/data';fs.mkdirSync(dataDir,{recursive:true});
-if(!process.env.APP_PASSWORD||process.env.APP_PASSWORD.length<8){console.error('Set APP_PASSWORD to at least 8 characters before starting.');process.exit(1)}
 const env={...process.env,DB:openDatabase(path.join(dataDir,'roofline.sqlite')),LOCAL_RUNNER:true};
 const credentials=credentialStore(dataDir);configureCredentials(env,credentials);
-const expected=Buffer.from('Basic '+Buffer.from((process.env.APP_USER||'admin')+':'+process.env.APP_PASSWORD).toString('base64'));
-function authenticated(req){const actual=Buffer.from(req.headers.authorization||'');return actual.length===expected.length&&timingSafeEqual(actual,expected)}
+let auth;try{auth=await createAuth(env.DB.sqlite,process.env)}catch(e){console.error(e.message);process.exit(1)}
 const types={'.html':'text/html; charset=utf-8','.js':'application/javascript','.css':'text/css','.svg':'image/svg+xml','.zip':'application/zip','.png':'image/png','.ico':'image/x-icon'};
 const server=http.createServer(async(req,res)=>{
  try{
-  if(!authenticated(req)){res.writeHead(401,{'WWW-Authenticate':'Basic realm="Trimlight Home Studio"','Cache-Control':'no-store'});res.end('Sign in to Trimlight Home Studio.');return}
   const host=req.headers.host||'localhost';const url=new URL(req.url,'http://'+host);
   if(req.method==='POST'&&req.headers.origin){const origin=new URL(req.headers.origin);if(origin.host!==host){res.writeHead(403);res.end('Origin not permitted');return}}
   if(url.pathname.startsWith('/api/')){
+   res.setHeader('Cache-Control','no-store');
+   const user=auth.user(req);
+   if(req.method!=='GET'&&req.method!=='POST'){res.writeHead(405);res.end();return}
+   if(req.method==='POST'&&!(req.headers['content-type']||'').startsWith('application/json')){res.writeHead(415);res.end(JSON.stringify({error:'JSON requests required.'}));return}
+   if(!user&&!['/api/auth/login','/api/auth/session'].includes(url.pathname)){res.writeHead(401,{'Content-Type':'application/json'});res.end(JSON.stringify({error:'Please sign in.'}));return}
+
    const chunks=[];let size=0;for await(const c of req){size+=c.length;if(size>1900000){res.writeHead(413);res.end('Request too large');return}chunks.push(c)}
-   const body=Buffer.concat(chunks);const r=new Request(url,{method:req.method,headers:req.headers,...(['GET','HEAD'].includes(req.method)?{}:{body})});
+   const body=Buffer.concat(chunks);const parsed=body.length?JSON.parse(body.toString()):{};
+   if(url.pathname.startsWith('/api/auth/')||url.pathname==='/api/users'){
+    try{const result=await auth.route(req,url.pathname,parsed,user);res.writeHead(200,{'Content-Type':'application/json',...(result.cookie?{'Set-Cookie':result.cookie}:{})});res.end(JSON.stringify(result.data));}catch(e){res.writeHead(e.status||400,{'Content-Type':'application/json'});res.end(JSON.stringify({error:e.message}));}return;
+   }
+   try{authorize(user,url.pathname,req.method,parsed,url.pathname==='/api/state'&&req.method==='POST'?(await readState(env)).state:null)}catch(e){res.writeHead(e.status||403,{'Content-Type':'application/json'});res.end(JSON.stringify({error:e.message}));return}
+   const r=new Request(url,{method:req.method,headers:req.headers,...(['GET','HEAD'].includes(req.method)?{}:{body})});
    const response=url.pathname==='/api/credentials'?await credentialsApi(r,env,credentials):await handleApi(r,env);res.writeHead(response.status,Object.fromEntries(response.headers));res.end(Buffer.from(await response.arrayBuffer()));return;
   }
   const root=path.resolve('standalone-dist');let file=path.resolve(root,'.'+decodeURIComponent(url.pathname));if(file!==root&&!file.startsWith(root+path.sep)){res.writeHead(403);res.end();return}

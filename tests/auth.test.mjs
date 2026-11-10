@@ -1,0 +1,32 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {DatabaseSync} from 'node:sqlite';
+import {createAuth,authorize} from '../standalone/auth.mjs';
+const request=(method='POST',cookie='')=>({method,headers:{cookie},socket:{remoteAddress:'127.0.0.1'}});
+test('accounts enforce roles, revoke sessions, preserve last admin and migrate only once',async()=>{
+ const db=new DatabaseSync(':memory:'),auth=await createAuth(db,{APP_USER:'Admin',APP_PASSWORD:'original-pass'});
+ const login=await auth.route(request(),'/api/auth/login',{username:'admin',password:'original-pass'});const req=request('POST',login.cookie.split(';')[0]);const admin=auth.user(req);assert.equal(admin.role,'admin');assert.match(login.cookie,/HttpOnly; SameSite=Strict/);
+ for(const role of ['editor','viewer'])await auth.route(req,'/api/users',{username:role,role,password:'new-password'},admin);
+ const editor=db.prepare("SELECT id,role FROM users WHERE username='editor'").get(),viewer=db.prepare("SELECT id,role FROM users WHERE username='viewer'").get();
+ assert.throws(()=>authorize(viewer,'/api/action','POST',{},{}),/Viewer/);
+ assert.throws(()=>authorize(editor,'/api/credentials','GET',{},{}),/Administrator/);
+ assert.throws(()=>authorize(editor,'/api/state','POST',{state:{settings:{maxAddress:5}}},{settings:{maxAddress:10}}),/administrators/);
+ assert.doesNotThrow(()=>authorize(editor,'/api/state','POST',{state:{settings:{maxAddress:10}}},{settings:{maxAddress:10}}));
+ await assert.rejects(auth.route(req,'/api/users',{id:admin.id,username:'admin',role:'viewer'},admin),/one active administrator/);
+ await assert.rejects(auth.route(req,'/api/users',{username:'other',role:'admin',password:'password'},viewer),/Administrator/);
+ const edLogin=await auth.route(request(),'/api/auth/login',{username:'editor',password:'new-password'});const edReq=request('POST',edLogin.cookie.split(';')[0]);assert.ok(auth.user(edReq));
+ await auth.route(req,'/api/users',{id:editor.id,username:'editor',role:'viewer',password:'reset-password'},admin);assert.equal(auth.user(edReq),null);
+ await assert.rejects(auth.route(request(),'/api/auth/login',{username:'editor',password:'new-password'}),/Incorrect/);
+ await auth.route(req,'/api/auth/password',{currentPassword:'original-pass',password:'changed-password'},admin);assert.equal(auth.user(req),null);
+ const again=await createAuth(db,{APP_USER:'admin',APP_PASSWORD:'original-pass'});
+ await assert.rejects(again.route(request(),'/api/auth/login',{username:'admin',password:'original-pass'}),/Incorrect/);
+ assert.equal((await again.route(request(),'/api/auth/login',{username:'admin',password:'changed-password'})).data.user.role,'admin');
+ assert.ok(!db.prepare('SELECT password FROM users').all().some(u=>u.password.includes('password')));db.close();
+});
+test('login throttles repeated failures and logout invalidates its cookie',async()=>{
+ const db=new DatabaseSync(':memory:'),auth=await createAuth(db,{APP_PASSWORD:'password'});
+ const login=await auth.route(request(),'/api/auth/login',{username:'admin',password:'password'}),req=request('POST',login.cookie.split(';')[0]);
+ await auth.route(req,'/api/auth/logout',{},auth.user(req));assert.equal(auth.user(req),null);
+ for(let i=0;i<10;i++)await assert.rejects(auth.route(request(),'/api/auth/login',{username:'admin',password:'wrong'}),/Incorrect/);
+ await assert.rejects(auth.route(request(),'/api/auth/login',{username:'admin',password:'password'}),/Too many/);db.close();
+});
