@@ -1,3 +1,4 @@
+import {roofSegments} from './house-map.mjs';
 // Browser-only visual approximations; never used to construct controller commands.
 // Mode 19 is inferred from the owner's native-app animation ordering, not an API
 // authoring capability. Keep this estimate isolated from controller serialization.
@@ -37,7 +38,7 @@ export function previewColors(effect, count, seconds=0) {
  });
 }
 export function roofPoints(lines, count=100){
- const segments=lines.flatMap(l=>l.points.slice(1).map((b,i)=>({a:l.points[i],b,len:Math.hypot(b[0]-l.points[i][0],b[1]-l.points[i][1])}))).filter(s=>s.len>0);
+ const segments=lines.flatMap(l=>roofSegments(l).filter(s=>s.lit).map(({a,b})=>({a,b,len:Math.hypot(b[0]-a[0],b[1]-a[1])}))).filter(s=>s.len>0);
  const total=segments.reduce((n,s)=>n+s.len,0);
  if(!total)return [];
  return Array.from({length:count},(_,i)=>{let d=i/Math.max(1,count-1)*total;for(const s of segments){if(d<=s.len)return [s.a[0]+(s.b[0]-s.a[0])*d/s.len,s.a[1]+(s.b[1]-s.a[1])*d/s.len];d-=s.len}return segments.at(-1).b});
