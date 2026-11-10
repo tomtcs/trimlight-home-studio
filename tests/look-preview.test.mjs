@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {previewColors,roofPoints} from '../shared/look-preview.mjs';
+import {previewColors,roofPoints,previewInfo} from '../shared/look-preview.mjs';
 import {householdState,dayPlan,dateKey} from '../shared/domain.mjs';
 test('preview is read-only, respects disabled pixels and brightness, and declines unknown effects',()=>{
  const e={category:1,mode:0,brightness:255,speed:100,pixels:[{index:1,count:1,color:255,disable:true},{index:0,count:1,color:16711680}]};
@@ -27,4 +27,15 @@ test('nightly presentation uses household date, priority conflict and next-day e
  s.rules.push({...r,id:'b',name:'Birthday',priority:20});assert.equal(dayPlan(s,key).rule.name,'Birthday');
  s.rules.push({...r,id:'c',priority:20});assert.equal(dayPlan(s,key).conflict,true);
  s.rules=[];assert.equal(dayPlan(s,key).rule,null);
+});
+
+test('legacy mode 19 animates an explicitly estimated preview without altering controller data',()=>{
+ const effect={category:1,mode:19,speed:127,brightness:255,pixels:[{index:0,count:5,color:0xff0000},{index:1,count:5,color:0xffffff},{index:2,count:5,color:0x0000ff}]};
+ const before=JSON.stringify(effect);
+ assert.deepEqual(previewInfo(effect),{supported:true,estimated:true,animated:true});
+ const a=previewColors(effect,100,.3), b=previewColors(effect,100,.8);
+ assert.notDeepEqual(a,b);assert.ok(a.some(Boolean));
+ assert.equal(JSON.stringify(effect),before);
+ assert.ok(previewColors({...effect,brightness:0},100,.3).every(c=>c===0));
+ assert.equal(previewInfo({...effect,mode:23}).supported,false);
 });

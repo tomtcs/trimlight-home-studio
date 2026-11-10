@@ -38,7 +38,7 @@ footer{border-top:1px solid #2d4634;margin-top:22px}
 
 /* Visual looks and resolved nightly plans */
 .look-preview{position:relative;width:100%;aspect-ratio:16/10;background:radial-gradient(ellipse at bottom,#20382d,#080e0b);overflow:hidden;border-radius:10px}
-.look-preview img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;opacity:.65}
+.look-preview img{position:absolute;inset:0;width:100%;height:100%;object-fit:fill;opacity:.65;filter:grayscale(1) brightness(.65)}
 .look-preview canvas{position:absolute;inset:0;width:100%;height:100%}
 .preview-caption{position:absolute;bottom:8px;left:10px;right:10px;color:#d1ded5;font-size:9px;text-align:left;background:#07100bc9;padding:5px 7px;border-radius:4px}
 .pattern-art{height:auto;padding:0;display:block;width:100%;position:relative}

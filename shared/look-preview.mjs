@@ -1,6 +1,13 @@
 // Browser-only visual approximations; never used to construct controller commands.
+// Mode 19 is inferred from the owner's native-app animation ordering, not an API
+// authoring capability. Keep this estimate isolated from controller serialization.
+export function previewInfo(effect){
+ const estimated=effect?.category===1&&effect.mode===19;
+ const supported=effect?.category===1&&Number.isInteger(effect.mode)&&((effect.mode>=0&&effect.mode<=16)||estimated);
+ return {supported,estimated,animated:supported&&![0,15].includes(effect.mode)};
+}
 export function previewColors(effect, count, seconds=0) {
- if(effect?.category!==1||effect.mode>16)return null;
+ if(!previewInfo(effect).supported)return null;
  const cycle=[...(effect.pixels||[])].sort((a,b)=>a.index-b.index).flatMap(p=>Array(Math.max(0,p.count)).fill(p.disable?0:p.color));
  if(!cycle.length)return Array(count).fill(0);
  const mode=effect.mode, phase=seconds*(.4+(effect.speed||0)/255*4), shift=Math.floor(phase*4);
@@ -18,6 +25,14 @@ export function previewColors(effect, count, seconds=0) {
   if(mode>=11&&mode<=14)v=.2+.8*(1+Math.sin(position*.45-phase))/2;
   // Strobe stays still in the gallery; deliberate preview should not flash unexpectedly.
   if(mode===16){c=cycle[Math.floor(phase)%cycle.length];v=.15+.85*(1+Math.sin(phase*Math.PI*2))/2}
+  if(mode===19){
+   // Repeating expanding bursts, smoothly fading rather than flashing.
+   const beat=phase*.55, burst=Math.floor(beat), age=beat-burst;
+   const center=(burst*37+Math.floor(count*.3))%count;
+   const distance=Math.abs(i-center), radius=age*count*.55;
+   v=Math.max(0,1-Math.abs(distance-radius)/Math.max(2,count*.06))*(1-age);
+   c=cycle[(i+burst)%cycle.length];
+  }
   return scale(c,v);
  });
 }
