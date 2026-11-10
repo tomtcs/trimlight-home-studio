@@ -3,7 +3,8 @@ import {HOUSE_SIDES,validateHouseViews} from './house-map.mjs';
 import {upgradeCatalog} from './catalog-upgrade.mjs';
 import SunCalc from 'suncalc';
 const INITIAL_PROTECTED_NAMES=[];
-export const uuid=()=>crypto.randomUUID();
+import {uuid} from './id.mjs';
+export {uuid};
 export function initialState(){
  const state={version:1,device:seed,snapshotAt:null,snapshotSource:'New household',patterns:seed.effects.map(e=>({id:'device-'+e.id,name:e.name,protected:INITIAL_PROTECTED_NAMES.includes(e.name.toLowerCase()),effect:e,source:'Controller import',updatedAt:new Date().toISOString(),tags:[]})),landmarks:[],zones:[],photo:null,
  settings:{lat:0,lon:0,location:'Set your location',timezone:'UTC',maxAddress:300,maxRun:60,schedulerEnabled:false},

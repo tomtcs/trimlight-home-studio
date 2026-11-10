@@ -1,4 +1,5 @@
 import test from 'node:test';
+import {uuid} from '../shared/id.mjs';
 import assert from 'node:assert/strict';
 import {spawn,spawnSync} from 'node:child_process';
 import {mkdtemp,rm} from 'node:fs/promises';
@@ -15,6 +16,15 @@ test('container server authenticates, serves the app, and persists landmarks',as
   a.state.landmarks.push({id:'test-corner',name:'Test corner',address:37,x:12,y:23});
   assert.equal((await fetch(base+'/api/state',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({state:a.state,revision:a.revision})})).status,200);
   a=await (await fetch(base+'/api/state',{headers})).json();assert.equal(a.state.landmarks[0].name,'Test corner');
+  const id=uuid({getRandomValues:globalThis.crypto.getRandomValues.bind(globalThis.crypto)});
+  a.state.houseViews={right:{photo:null,lines:[{id,kind:'edge',points:[[10,10],[20,20],[30,20]],wireSegments:[1]}]}};
+  let saved=await fetch(base+'/api/state',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({state:a.state,revision:a.revision})});
+  assert.equal(saved.status,200);a=await saved.json();
+  a.state.houseViews.right.lines[0].points[1]=[25,25];
+  saved=await fetch(base+'/api/state',{method:'POST',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({state:a.state,revision:a.revision})});
+  assert.equal(saved.status,200);
+  a=await (await fetch(base+'/api/state',{headers})).json();
+  assert.deepEqual(a.state.houseViews.right.lines[0],{id,kind:'edge',points:[[10,10],[25,25],[30,20]],wireSegments:[1]});
   assert.equal((await fetch(base+'/api/state',{method:'POST',headers:{...headers,Origin:'https://evil.example','Content-Type':'application/json'},body:'{}'})).status,403);
  }finally{child.kill('SIGTERM');await new Promise(r=>child.once('exit',r));await rm(dir,{recursive:true,force:true})}
 });
