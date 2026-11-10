@@ -1,0 +1,11 @@
+node_modules
+.git
+.sites-runtime
+.wrangler
+.vinext
+dist
+standalone-dist
+.env
+.env.*
+public/roofline-studio-container.zip
+outputs

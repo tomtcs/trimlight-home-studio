@@ -1,0 +1,7 @@
+import test from 'node:test';import assert from 'node:assert/strict';
+import {detectRoofline,simplify} from '../shared/roof-detect.mjs';
+function photo(w,h,boundary){const data=new Uint8ClampedArray(w*h*4);for(let y=0;y<h;y++)for(let x=0;x<w;x++){const v=y<boundary(x)?220:45,i=(y*w+x)*4;data.set([v,v,v,255],i)}return {data,width:w,height:h}}
+test('suggests a gable with a preserved peak and normalized editable points',()=>{const w=240,h=160,roof=x=>35+Math.abs(x-120)*.45;const r=detectRoofline(photo(w,h,roof));assert.ok(r.points.length>=3);assert.ok(r.points.length<=100);for(const [x,y]of r.points){assert.ok(Math.abs(y*(h-1)/100-roof(x*(w-1)/100))<5);assert.ok(x>=0&&x<=100&&y>=0&&y<=100)}assert.ok(Math.min(...r.points.map(p=>p[1]))<25)});
+test('flat photographs produce no invented roofline',()=>{const r=detectRoofline(photo(100,100,()=>101));assert.equal(r.points.length,0);assert.equal(r.quality,'low')});
+test('search band isolates a second boundary and rejects invalid input',()=>{const p=photo(180,140,()=>35);for(let y=95;y<140;y++)for(let x=0;x<180;x++)p.data.set([250,250,250,255],(y*180+x)*4);const r=detectRoofline(p,{top:12,bottom:50});assert.ok(r.points.every(p=>p[1]<40));assert.throws(()=>detectRoofline(p,{top:80,bottom:30}),/search band/);assert.throws(()=>detectRoofline({data:[],width:30,height:30}),/image/)});
+test('simplification preserves endpoints and meaningful corners',()=>{assert.deepEqual(simplify([[0,10],[5,5],[10,0],[15,5],[20,10]],1),[[0,10],[10,0],[20,10]])});

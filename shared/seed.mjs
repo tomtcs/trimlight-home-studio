@@ -1,0 +1,1 @@
+export default {effects:[],calendar:[],daily:[],ports:[],connectivity:0,switchState:2};

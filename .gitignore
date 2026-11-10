@@ -1,0 +1,11 @@
+node_modules/
+standalone-dist/
+.env
+.env.*
+!env.example
+data/
+*.sqlite*
+credentials.enc
+credentials.key
+*.log
+.DS_Store
