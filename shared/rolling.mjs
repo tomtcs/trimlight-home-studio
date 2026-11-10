@@ -1,6 +1,7 @@
+import {repairState} from './sync-repair.mjs';
 import {readState,writeState,lease,trim,addEvent} from './service.mjs';
 import {zonedParts,effectPayload,uuid} from './domain.mjs';
-import {rollingPlan,signature,effectSignature,calendarSignature,calendarPayload} from './rolling-plan.mjs';
+import {rollingPlan,windowFor,signature,effectSignature,calendarSignature,calendarPayload} from './rolling-plan.mjs';
 const fingerprint=d=>JSON.stringify({effects:[...d.effects].sort((a,b)=>a.id-b.id).map(e=>[e.id,signature(e)]),calendar:[...d.calendar].sort((a,b)=>a.id-b.id).map(c=>[c.id,calendarSignature(c)]),daily:d.daily,combinedEffect:d.combinedEffect,ports:d.ports});
 async function document(env,id){const r=await env.DB.prepare('SELECT data,revision FROM documents WHERE id=?').bind(id).first();return r?JSON.parse(r.data):null;}
 async function persist(env,id,data){await env.DB.prepare('INSERT INTO documents (id,data,revision) VALUES (?,?,0) ON CONFLICT(id) DO UPDATE SET data=excluded.data,revision=documents.revision+1').bind(id,JSON.stringify(data)).run();}
@@ -10,16 +11,23 @@ function publicJob(j){if(!j)return null;return {id:j.id,status:j.status,window:j
 export async function rollingStatus(env){const r=await readState(env),job=await document(env,'rolling-job');let plan,error;try{plan=rollingPlan(r.state)}catch(e){error=e.message}return {...r,job:publicJob(job),plan:plan&&{window:plan.window,calendarSlots:plan.calendarSlots,patternSlots:plan.patternSlots,roundMinutes:5},error};}
 export async function rollingAction(env,body){return lease(env,async()=>{
  const r=await readState(env),s=r.state;let revision=r.revision;let job=await document(env,'rolling-job');
+ if(body.action==='repair'){
+  if(job?.status==='running')throw new Error('Finish the running job before repairing designs.');
+  if(body.revision!==revision)throw new Error('The library changed. Refresh before repairing.');
+  const next=repairState(s,body.patternId,body.mode,body.transferProtection===true);
+  addEvent(next,'Created compatible copy and reassigned its calendar rules');
+  return {state:next,revision:await writeState(env,next,revision)};
+ }
  if(body.action==='recover'){
   if(!job||job.status!=='failed')throw new Error('No failed job requires recovery verification.');await refreshShadow(env,s.settings.timezone);const restored=await controllerRead(env,s.settings.timezone);if(fingerprint(restored)!==fingerprint(job.before))throw new Error('The controller still differs from the saved backup. Recovery requires attention.');job.status='restored';job.error='Original controller configuration restored and verified.';await persist(env,'rolling-job',job);s.device=restored;s.rolling={...publicJob(job),roundMinutes:5};addEvent(s,job.error);return {state:s,revision:await writeState(env,s,revision),job:publicJob(job)};
  }
  if(body.action==='pause'){if(job?.status==='running')throw new Error('Finish the current sync before pausing.');s.settings.rollingEnabled=false;return {state:s,revision:await writeState(env,s,revision),job:publicJob(job)};}
  if(body.action==='plan'){await refreshShadow(env,s.settings.timezone);const d=await controllerRead(env,s.settings.timezone);const p=rollingPlan(s,new Date(),d);return {window:p.window,calendarSlots:p.calendarSlots,patternSlots:p.patternSlots,removePatterns:p.removeEffects.map(e=>e.name),addPatterns:p.missing.map(p=>p.name),calendarBefore:d.calendar.length,roundMinutes:5};}
- if(body.action==='enable'){s.settings.rollingEnabled=true;s.settings.schedulerEnabled=false;revision=await writeState(env,s,revision);body={action:'start',force:true};}
+ if(body.action==='enable'){s.settings.rollingEnabled=true;s.settings.schedulerEnabled=false;body={action:'start',force:true};}
  if(body.action==='start'){
   if(!s.settings.rollingEnabled)return {paused:true,job:publicJob(job)};
   if(job?.status==='running')return {job:publicJob(job)};
-  const plan=rollingPlan(s);if(!body.force&&job?.status==='complete'&&job.plan.window.month===plan.window.month)return {job:publicJob(job),alreadyCurrent:true};
+  if(!body.force&&job?.status==='complete'&&job.plan.window.month===windowFor(new Date(),s.settings.timezone).month)return {job:publicJob(job),alreadyCurrent:true};
   if(job?.status==='failed')throw new Error('The last sync failed and was rolled back or needs recovery. Review its error before starting again.');
   await refreshShadow(env,s.settings.timezone);const before=await controllerRead(env,s.settings.timezone),p=rollingPlan(s,new Date(),before);
   if((before.daily||[]).some(x=>x.enable))throw new Error('An enabled daily timer could overlap the rolling calendar. Disable it in Trimlight before syncing.');

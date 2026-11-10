@@ -88,5 +88,5 @@ export async function handleApi(request,env){
  if(path==='action')return json(await controllerAction(env,body));
  if(path==='scheduler')return json(await setScheduler(env,body.enabled));
  return json({error:'Not found'},404);
- }catch(e){return json({error:e.message||'Request failed'},e.status||400)}
+ }catch(e){return json({error:e.message||'Request failed',...(e.issue?{issue:e.issue}:{})},e.status||400)}
 }

@@ -1,3 +1,4 @@
+import {legacyIssue} from './sync-repair.mjs';
 import {dayPlan,dateKey,plusDay,zonedParts,effectPayload} from './domain.mjs';
 export const effectSignature=e=>JSON.stringify(effectPayload(e));
 export const signature=e=>JSON.stringify({name:e.name,...effectPayload(e)});
@@ -21,7 +22,7 @@ export function rollingPlan(state,now=new Date(),device=state.device){
  for(const d of device.daily||[])if(d.effectId!==200)keep.add(d.effectId);
  for(const id of device.combinedEffect?.effectIds||[])keep.add(id);for(const x of device.overlayEffects||[])if(x.targetEffect!==200)keep.add(x.targetEffect);
  const mapping={},missing=[];
- for(const p of wanted){const e=device.effects.find(e=>effectSignature(e)===effectSignature(p.effect));if(e){mapping[p.id]=e.id;keep.add(e.id)}else {if(p.effect.category===1&&(p.effect.mode>16||p.effect.pixels.some(x=>x.count>60)))throw new Error(`${p.name} uses a legacy mode or run length that cannot be safely re-saved through the API. Keep its original on the controller or make an API-compatible copy.`);missing.push(p);}}
+ for(const p of wanted){const e=device.effects.find(e=>effectSignature(e)===effectSignature(p.effect));if(e){mapping[p.id]=e.id;keep.add(e.id)}else {if(p.effect.category===1&&(p.effect.mode>16||p.effect.pixels.some(x=>x.count>60)))throw Object.assign(new Error(`${p.name} needs a compatible copy before syncing.`),{issue:legacyIssue(state,p,window)});missing.push(p);}}
  const retained=device.effects.filter(e=>keep.has(e.id));if(retained.length+missing.length>60)throw new Error('Required and protected patterns exceed the 60 controller slots. Nothing was changed.');
  return {window,rows,wanted: wanted.map(p=>p.id),mapping,missing,removeEffects:device.effects.filter(e=>!keep.has(e.id)),calendarSlots:rows.length,patternSlots:retained.length+missing.length,roundMinutes:5};
 }
