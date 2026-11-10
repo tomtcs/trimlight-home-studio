@@ -4,7 +4,7 @@ export async function credentialsApi(request,env,store){
  const status=()=>({configured:!!(env.TRIMLIGHT_CLIENT_ID&&env.TRIMLIGHT_CLIENT_SECRET&&env.TRIMLIGHT_DEVICE_ID),clientId:env.TRIMLIGHT_CLIENT_ID||'',deviceId:env.TRIMLIGHT_DEVICE_ID||'',hasSecret:!!env.TRIMLIGHT_CLIENT_SECRET});
  if(request.method==='GET')return json(status());
  if(request.method!=='POST')return json({error:'Method not allowed'},405);
- try{const b=await request.json();return await lease(env,async()=>{
+ try{const b=await request.json();if(b.action==='discover')return json({devices:await discoverControllers(b,env)});return await lease(env,async()=>{
  const {state,revision}=await readState(env);if(state.settings.schedulerEnabled||state.runtime.preview||state.rolling?.status==='running')throw new Error('Pause scheduling, resume Timer Mode, and finish any active sync before changing the connection.');
  if(b.action==='disconnect'){await store.write({});for(const v of Object.values(fields))env[v]='';return json({...status(),connected:false});}
  if(!['test','save'].includes(b.action))throw new Error('Unknown connection action.');
@@ -18,4 +18,21 @@ export async function credentialsApi(request,env,store){
  if(!state.patterns.length&&!state.rules.length){state.device=device;state.patterns=device.effects.map(e=>({id:'device-'+e.id,name:e.name,effect:e,protected:false,source:'Controller import',updatedAt:new Date().toISOString(),tags:[]}));const max=Math.max(1,...(device.ports||[]).map(p=>p.end));state.settings.maxAddress=Math.min(2048,max);state.snapshotAt=new Date().toISOString();state.snapshotSource='Connection setup readback';}
  await writeState(env,state,revision);await store.write({clientId,clientSecret,deviceId});Object.assign(env,trial);return json({...status(),connected:true,message:'Credentials saved securely on this server.'});
  });}catch(e){return json({error:e.message},e.status||400)}
+}
+
+export async function discoverControllers(body,env){
+ const clientId=typeof body.clientId==='string'?body.clientId.trim():'';
+ const secret=body.clientSecret||(clientId===env.TRIMLIGHT_CLIENT_ID?env.TRIMLIGHT_CLIENT_SECRET:'');
+ if(!clientId||!secret||[clientId,secret].some(v=>typeof v!=='string'||v.length>256||/[\r\n]/.test(v)))throw new Error('Enter a valid client ID and client secret before finding controllers.');
+ try{
+  const timestamp=String(Date.now()),encoder=new TextEncoder();
+  const key=await crypto.subtle.importKey('raw',encoder.encode(secret),{name:'HMAC',hash:'SHA-256'},false,['sign']);
+  const bytes=new Uint8Array(await crypto.subtle.sign('HMAC',key,encoder.encode(`Trimlight|${clientId}|${timestamp}`)));
+  const response=await (env.FETCH||fetch)('https://trimlight.ledhue.com/trimlight/v1/oauth/resources/devices?page=0',{method:'GET',headers:{'Authorization':btoa(String.fromCharCode(...bytes)),'S-ClientId':clientId,'S-Timestamp':timestamp},signal:AbortSignal.timeout(25000)});
+  if(!response.ok)throw new Error();const result=await response.json();
+  if(result.code!==0||!Array.isArray(result.payload?.data))throw new Error();
+  const devices=result.payload.data;
+  if(devices.some(d=>!d||typeof d.deviceId!=='string'||!d.deviceId||d.deviceId.length>256||/[\r\n]/.test(d.deviceId)))throw new Error();
+  return devices.map(d=>({deviceId:d.deviceId,name:typeof d.name==='string'?d.name.slice(0,200):'Unnamed controller',online:d.connectivity===1}));
+ }catch{throw new Error('Could not retrieve controllers. Check your API credentials and network connection, then try again.');}
 }

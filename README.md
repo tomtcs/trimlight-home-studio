@@ -18,7 +18,7 @@ cp env.example .env
 docker compose up -d --build
 ```
 
-Open `http://localhost:8080`, sign in, and configure **Settings → Trimlight connection**. Enter your own API client ID, secret and controller device ID. Set your location, time zone and bulb count before enabling scheduling. New installs start empty and import controller patterns when first connected.
+Open `http://localhost:8080`, sign in, and configure **Settings → Trimlight connection**. Enter your API client ID and secret, click **Find controllers**, then select your controller and **Test & save**. Set your location, time zone and bulb count before enabling scheduling. New installs start empty and import controller patterns when first connected.
 
 See [HOME_SERVER.md](HOME_SERVER.md) for installation, backups, credential management and operating details.
 
