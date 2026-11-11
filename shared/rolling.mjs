@@ -3,15 +3,17 @@ import {readState,writeState,lease,trim,addEvent} from './service.mjs';
 import {zonedParts,effectPayload,uuid} from './domain.mjs';
 import {rollingPlan,windowFor,signature,effectSignature,calendarSignature,calendarPayload} from './rolling-plan.mjs';
 import {fingerprint,expectedAfter,matchesExpected,controllerName} from './upload-verification.mjs';
+const VERIFY_WINDOW_MS=180000, VERIFY_INTERVAL_MS=15000;
+const uploadNow=env=>env.UPLOAD_NOW?env.UPLOAD_NOW():Date.now();
 async function document(env,id){const r=await env.DB.prepare('SELECT data,revision FROM documents WHERE id=?').bind(id).first();return r?JSON.parse(r.data):null;}
 async function persist(env,id,data){await env.DB.prepare('INSERT INTO documents (id,data,revision) VALUES (?,?,0) ON CONFLICT(id) DO UPDATE SET data=excluded.data,revision=documents.revision+1').bind(id,JSON.stringify(data)).run();}
 async function refreshShadow(env,tz){const p=zonedParts(new Date(),tz);await trim(env,'notify-update-shadow',undefined,'POST',{currentDate:{year:+p.year-2000,month:+p.month,day:+p.day,weekday:new Date(`${p.year}-${p.month}-${p.day}T12:00:00Z`).getUTCDay()+1,hours:+p.hour,minutes:+p.minute,seconds:+p.second}});await (env.UPLOAD_WAIT||((ms)=>new Promise(resolve=>setTimeout(resolve,ms))))(3000);}
 export async function controllerRead(env,tz){const p=zonedParts(new Date(),tz),currentDate={year:+p.year-2000,month:+p.month,day:+p.day,hours:+p.hour,minutes:+p.minute,seconds:+p.second,weekday:new Date(`${p.year}-${p.month}-${p.day}T12:00:00Z`).getUTCDay()+1};const r=await trim(env,'get',undefined,'POST',{currentDate});const d=r.payload;if(!d||!Array.isArray(d.effects)||!Array.isArray(d.calendar)||d.connectivity!==1)throw new Error('Controller is offline or did not return a usable snapshot. This read could not be verified.');return d;}
 function stepLabel(op){if(!op)return 'Finishing';return ({deleteCalendar:'Removing old calendar entry',deleteEffect:'Archiving unused controller slot',saveEffect:'Saving design: '+(op.pattern?.name||''),saveCalendar:'Saving calendar: '+(op.row?.start||'')+' through '+(op.row?.end||''),verify:'Verifying patterns, calendar, and Timer Mode'})[op.kind]||'Processing controller request'}
-function publicJob(j){if(!j)return null;return {id:j.id,status:j.status,stage:j.pending?'Refreshing and verifying: '+stepLabel(j.ops[j.cursor]):stepLabel(j.ops[j.cursor]),window:j.plan.window,calendarSlots:j.plan.calendarSlots,patternSlots:j.plan.patternSlots,cursor:j.cursor,total:j.ops.length,error:j.error||null,completedAt:j.completedAt||null,testMode:!!j.testMode,phase:j.pending?'verify-write':'prepare-write'};}
+function publicJob(j){if(!j)return null;return {id:j.id,status:j.status,stage:j.pending?'Waiting for Trimlight cloud data to update: '+stepLabel(j.ops[j.cursor])+' · '+(j.pending.attempts||0)+' checks · '+Math.floor((j.pending.elapsedMs||0)/1000)+'s / 180s':stepLabel(j.ops[j.cursor]),window:j.plan.window,calendarSlots:j.plan.calendarSlots,patternSlots:j.plan.patternSlots,cursor:j.cursor,total:j.ops.length,error:j.error||null,completedAt:j.completedAt||null,testMode:!!j.testMode,phase:j.pending?'verify-write':'prepare-write'};}
 export async function rollingStatus(env){const r=await readState(env),job=await document(env,'rolling-job');let plan,error;try{plan=rollingPlan(r.state)}catch(e){error=e.message}return {...r,job:publicJob(job),plan:plan&&{window:plan.window,calendarSlots:plan.calendarSlots,patternSlots:plan.patternSlots,roundMinutes:5},error};}
 export async function rollingAction(env,body){return lease(env,async()=>{
- const r=await readState(env),s=r.state;let revision=r.revision;let job=await document(env,'rolling-job');
+ const r=await readState(env),s=r.state;let revision=r.revision;let job=await document(env,'rolling-job');let readOnlyRecheck=false;
  if(body.action==='repair'){
   if(job?.status==='running')throw new Error('Finish the running job before repairing designs.');
   if(body.revision!==revision)throw new Error('The library changed. Refresh before repairing.');
@@ -55,7 +57,7 @@ export async function rollingAction(env,body){return lease(env,async()=>{
  }
  if(body.action==='recheckUpload'){
   if(!job||job.status!=='failed'||job.uploaderVersion!==2||job.pending?.phase!=='verifying'||body.jobId!==job.id)throw new Error('No acknowledged upload is available for a read-only recheck.');
-  job.status='running';job.error=null;job.pending.attempts=2;
+  job.status='running';job.error=null;readOnlyRecheck=true;
   body={action:'step',jobId:job.id};
  }
  if(body.action==='recover'){
@@ -92,13 +94,20 @@ export async function rollingAction(env,body){return lease(env,async()=>{
   const op=job.ops[job.cursor];
   // An interrupted write is never sent again. The durable intent survives a lost response.
   if(job.pending?.phase==='sending')throw new Error('The previous write has an unknown outcome. No retry was sent. Inspect the controller before recovery.');
+  if(job.pending&&!readOnlyRecheck){
+   const wait=Math.max(0,Math.min(VERIFY_INTERVAL_MS,(job.pending.nextCheckAt||0)-uploadNow(env)));
+   if(wait)await (env.UPLOAD_WAIT||((ms)=>new Promise(resolve=>setTimeout(resolve,ms))))(wait);
+  }
   await refreshShadow(env,s.settings.timezone);
   const device=await controllerRead(env,s.settings.timezone);
   job.lastRead={at:new Date().toISOString(),effects:device.effects.length,calendar:device.calendar.length};
   if(job.pending){
    job.pending.lastReadback=device;job.pending.attempts=(job.pending.attempts||0)+1;
+   job.pending.verificationStartedAt??=uploadNow(env);
+   job.pending.elapsedMs=Math.max(0,uploadNow(env)-job.pending.verificationStartedAt);
    if(!matchesExpected(device,job.pending)){
-    if(job.pending.attempts>=3)throw new Error('Fresh controller readback did not match the acknowledged write after three checks. No further changes were sent.');
+    if(readOnlyRecheck||job.pending.elapsedMs>=VERIFY_WINDOW_MS)throw new Error('Controller readback still does not match the acknowledged write'+(readOnlyRecheck?' on read-only recheck':' after the three-minute verification window')+'. The pending operation was preserved for another read-only recheck. No further changes were sent.');
+    job.pending.nextCheckAt=uploadNow(env)+VERIFY_INTERVAL_MS;
     await persist(env,'rolling-job',job);return {job:publicJob(job)};
    }
    job.verifiedDevice=device;
@@ -142,7 +151,7 @@ export async function rollingAction(env,body){return lease(env,async()=>{
     await persist(env,'rolling-job',job);
     const response=await trim(env,path,payload);
     const responseId=response.payload?.id;
-    job.pending={...job.pending,phase:'verifying',responseId,expected:expectedAfter(device,path,payload,responseId)};
+    job.pending={...job.pending,phase:'verifying',responseId,verificationStartedAt:uploadNow(env),nextCheckAt:uploadNow(env)+VERIFY_INTERVAL_MS,expected:expectedAfter(device,path,payload,responseId)};
     if(path==='effect/save')job.plan.mapping[op.pattern.id]=responseId;
    }
   }

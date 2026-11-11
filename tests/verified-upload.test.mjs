@@ -5,7 +5,7 @@ import {readState,writeState} from '../shared/service.mjs';
 import {rollingAction,rollingStatus,rollingBackup} from '../shared/rolling.mjs';
 import {effectPayload} from '../shared/domain.mjs';
 async function fixture({stale=0,parseError=false,lostAck=false}={}){
- const calls=[],waits=[];const env={DB:openDatabase(':memory:'),LOCAL_RUNNER:true,CONTROLLER_PROTECTION:'off',TRIMLIGHT_CLIENT_ID:'test',TRIMLIGHT_CLIENT_SECRET:'test',TRIMLIGHT_DEVICE_ID:'test',UPLOAD_WAIT:async ms=>waits.push(ms)};
+ let now=Date.now();const calls=[],waits=[];const env={DB:openDatabase(':memory:'),LOCAL_RUNNER:true,CONTROLLER_PROTECTION:'off',TRIMLIGHT_CLIENT_ID:'test',TRIMLIGHT_CLIENT_SECRET:'test',TRIMLIGHT_DEVICE_ID:'test',UPLOAD_NOW:()=>now,ADVANCE:ms=>now+=ms,UPLOAD_WAIT:async ms=>{waits.push(ms);now+=ms;}};
  let {state,revision}=await readState(env);
  const effect=effectPayload({category:1,mode:0,brightness:100,speed:50,pixels:[{index:0,count:5,color:255,disable:false}]});
  state.patterns=[{id:'blue',name:'Blue',effect,protected:false}];state.rules=[{id:'all',name:'All year',patternId:'blue',startDate:'01-01',endDate:'12-31',year:null,enabled:true,priority:1,kind:'fixed',fixedStart:'17:00',end:'23:00',offset:0}];
@@ -28,7 +28,7 @@ async function fixture({stale=0,parseError=false,lostAck=false}={}){
  };
  return {env,calls,waits,getLive:()=>live};
 }
-const step=(env,id)=>rollingAction(env,{action:'step',jobId:id});
+const step=(env,id)=>{env.ADVANCE(60000);return rollingAction(env,{action:'step',jobId:id});};
 test('single-design test waits for refreshed matching readback; no calendar/delete writes; duplicate step does not resend',async()=>{
  const {env,calls,waits}=await fixture({stale:1});let r=await rollingAction(env,{action:'testDesign'});const id=r.job.id;
  r=await step(env,id);assert.equal(r.job.cursor,0);assert.equal(r.job.phase,'verify-write');
@@ -40,10 +40,10 @@ test('single-design test waits for refreshed matching readback; no calendar/dele
  assert.equal((await rollingBackup(env)).diagnostics.verifiedWrites.length,1);
  const paths=calls.map(c=>c.path);for(let i=0;i<paths.length;i++)if(paths[i]==='get')assert.equal(paths[i-1],'notify-update-shadow');
 });
-test('three stale readbacks stop without rollback or another write',async()=>{
+test('stale readbacks stop after three minutes without rollback or another write',async()=>{
  const {env,calls}=await fixture({stale:99});let {job}=await rollingAction(env,{action:'testDesign'});
  for(let i=0;i<4;i++)({job}=await step(env,job.id));
- assert.equal(job.status,'failed');assert.match(job.error,/three checks/);assert.equal(calls.filter(c=>c.path==='effect/save').length,1);assert.ok(!calls.some(c=>c.path.includes('restore')));
+ assert.equal(job.status,'failed');assert.match(job.error,/three-minute/);assert.equal(calls.filter(c=>c.path==='effect/save').length,1);assert.ok(!calls.some(c=>c.path.includes('restore')));
 });
 test('lost write acknowledgement is durable and never replayed',async()=>{
  const {env,calls}=await fixture({lostAck:true});let {job}=await rollingAction(env,{action:'testDesign'});({job}=await step(env,job.id));assert.equal(job.status,'failed');await step(env,job.id);
@@ -111,4 +111,13 @@ test('retain rejects other controller changes',async()=>{
  await env.DB.prepare('UPDATE documents SET data=? WHERE id=?').bind(JSON.stringify(j),'rolling-job').run();
  getLive().ports=[{id:1,start:1,end:1}];
  await assert.rejects(rollingAction(env,{action:'keepDesign',jobId:job.id}),/differs/);
+});
+
+test('rapid polling waits between reads and tolerates more than three stale snapshots',async()=>{
+ const {env,calls,waits}=await fixture({stale:6});let {job}=await rollingAction(env,{action:'testDesign'});
+ ({job}=await rollingAction(env,{action:'step',jobId:job.id}));
+ for(let i=0;i<6;i++){({job}=await rollingAction(env,{action:'step',jobId:job.id}));assert.equal(job.status,'running');assert.equal(job.cursor,0);}
+ assert.match(job.stage,/Waiting for Trimlight cloud/);
+ ({job}=await rollingAction(env,{action:'step',jobId:job.id}));assert.equal(job.status,'complete');
+ assert.ok(waits.includes(15000));assert.equal(calls.filter(c=>c.path==='effect/save').length,1);
 });
