@@ -4,7 +4,7 @@ import {openDatabase} from '../standalone/database.mjs';
 import {readState,writeState} from '../shared/service.mjs';
 import {rollingAction,rollingStatus,rollingBackup} from '../shared/rolling.mjs';
 import {effectPayload} from '../shared/domain.mjs';
-async function fixture({stale=0,parseError=false,lostAck=false}={}){
+async function fixture({stale=0,parseError=false,lostAck=false,rejectCalendar=false}={}){
  let now=Date.now();const calls=[],waits=[];const env={DB:openDatabase(':memory:'),LOCAL_RUNNER:true,CONTROLLER_PROTECTION:'off',TRIMLIGHT_CLIENT_ID:'test',TRIMLIGHT_CLIENT_SECRET:'test',TRIMLIGHT_DEVICE_ID:'test',UPLOAD_NOW:()=>now,ADVANCE:ms=>now+=ms,UPLOAD_WAIT:async ms=>{waits.push(ms);now+=ms;}};
  let {state,revision}=await readState(env);
  const effect=effectPayload({category:1,mode:0,brightness:100,speed:50,pixels:[{index:0,count:5,color:255,disable:false}]});
@@ -20,6 +20,7 @@ async function fixture({stale=0,parseError=false,lostAck=false}={}){
   }
   if(path==='data/backup/get')return Response.json({code:0,payload:{backupKey:'test-backup'}});
   if(path==='effect/save'){old=structuredClone(live);live.effects.push({...body.payload,id:10});written=true;if(lostAck)throw new Error('Connection lost after write');return Response.json({code:0,payload:{id:10}})}
+  if(path==='calendar/save'&&rejectCalendar)return Response.json({code:12000,desc:'The calendar schedules cannot be crossed.'});
   if(path==='calendar/save'){old=structuredClone(live);written=true;live.calendar.push({...body.payload});return Response.json({code:0,payload:{id:body.payload.id}})}
   if(path==='effect/delete')live.effects=live.effects.filter(e=>e.id!==body.payload.id);
   if(path==='calendar/delete')live.calendar=live.calendar.filter(c=>c.id!==body.payload.id);
@@ -141,4 +142,38 @@ test('calendar test waits through stale readback without repeating the save',asy
  for(let i=0;i<8;i++)({job}=await rollingAction(env,{action:'step',jobId:job.id}));
  assert.equal(job.status,'complete');assert.equal(calls.filter(c=>c.path==='calendar/save').length,1);
  assert.ok(!calls.some(c=>['effect/save','effect/delete','calendar/delete','update'].includes(c.path)));
+});
+
+async function rejectedCalendarFixture(){
+ const f=await fixture({rejectCalendar:true});
+ f.getLive().effects=[{id:11,name:'Existing',...effectPayload({category:1,mode:0,brightness:100,speed:50,pixels:[{index:0,count:1,color:255,disable:false}]})}];
+ let {job}=await rollingAction(f.env,{action:'testCalendar',date:`${new Date().getUTCFullYear()}-12-31`,start:'17:00',end:'23:00',effectId:11});
+ ({job}=await step(f.env,job.id));assert.equal(job.status,'failed');assert.equal(job.canReviewRejected,true);
+ return {...f,job};
+}
+test('rejected calendar review accepts only unchanged configuration or matching manual addition, without writes',async()=>{
+ for(const added of [false,true]){
+  const {env,calls,getLive,job}=await rejectedCalendarFixture();
+  if(added){const p=(await rollingBackup(env)).diagnostics.pendingWrite.payload;getLive().calendar.push({...p,id:2});}
+  const revision=(await readState(env)).revision,count=calls.length;
+  const r=await rollingAction(env,{action:'reviewRejectedCalendar',jobId:job.id,revision,confirmReview:true});
+  assert.equal(r.job.status,'rejectionReviewed');assert.equal(r.state.settings.rollingEnabled,false);
+  assert.deepEqual(calls.slice(count).map(c=>c.path),['notify-update-shadow','get']);
+  assert.ok(await env.DB.prepare('SELECT data FROM documents WHERE id=?').bind('rolling-archive-'+job.id).first());
+ }
+});
+test('rejected calendar review refuses unrelated changes and stale confirmation',async()=>{
+ const {env,getLive,job}=await rejectedCalendarFixture();const revision=(await readState(env)).revision;
+ await assert.rejects(rollingAction(env,{action:'reviewRejectedCalendar',jobId:job.id,revision:revision-1,confirmReview:true}),/Refresh/);
+ getLive().effects[0].pixels[0].color=123;
+ await assert.rejects(rollingAction(env,{action:'reviewRejectedCalendar',jobId:job.id,revision,confirmReview:true}),/changes exceed/);
+ assert.equal((await rollingStatus(env)).job.status,'failed');
+});
+test('calendar diagnostic allocates ID 3 when IDs 1 and 2 are occupied',async()=>{
+ const {env,calls,getLive}=await fixture();const live=getLive();
+ live.effects=[{id:11,name:'Existing',...effectPayload({category:1,mode:0,brightness:100,speed:50,pixels:[{index:0,count:1,color:255,disable:false}]})}];
+ live.calendar=[1,2].map(id=>({id,effectId:11,startDate:{month:1,day:id},endDate:{month:1,day:id},startTime:{hours:17,minutes:0},endTime:{hours:23,minutes:0}}));
+ let {job}=await rollingAction(env,{action:'testCalendar',date:`${new Date().getUTCFullYear()}-12-31`,start:'17:00',end:'23:00',effectId:11});
+ ({job}=await step(env,job.id));assert.equal(calls.find(c=>c.path==='calendar/save').payload.id,3);
+ ({job}=await step(env,job.id));assert.equal(job.status,'complete');
 });

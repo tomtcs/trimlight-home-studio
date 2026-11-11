@@ -11,7 +11,7 @@ async function persist(env,id,data){await env.DB.prepare('INSERT INTO documents 
 async function refreshShadow(env,tz){const p=zonedParts(new Date(),tz);await trim(env,'notify-update-shadow',undefined,'POST',{currentDate:{year:+p.year-2000,month:+p.month,day:+p.day,weekday:new Date(`${p.year}-${p.month}-${p.day}T12:00:00Z`).getUTCDay()+1,hours:+p.hour,minutes:+p.minute,seconds:+p.second}});await (env.UPLOAD_WAIT||((ms)=>new Promise(resolve=>setTimeout(resolve,ms))))(3000);}
 export async function controllerRead(env,tz){const p=zonedParts(new Date(),tz),currentDate={year:+p.year-2000,month:+p.month,day:+p.day,hours:+p.hour,minutes:+p.minute,seconds:+p.second,weekday:new Date(`${p.year}-${p.month}-${p.day}T12:00:00Z`).getUTCDay()+1};const r=await trim(env,'get',undefined,'POST',{currentDate});const d=r.payload;if(!d||!Array.isArray(d.effects)||!Array.isArray(d.calendar)||d.connectivity!==1)throw new Error('Controller is offline or did not return a usable snapshot. This read could not be verified.');return d;}
 function stepLabel(op){if(!op)return 'Finishing';return ({deleteCalendar:'Removing old calendar entry',deleteEffect:'Archiving unused controller slot',saveEffect:'Saving design: '+(op.pattern?.name||''),saveCalendar:'Saving calendar: '+(op.row?.start||'')+' through '+(op.row?.end||''),verify:'Verifying patterns, calendar, and Timer Mode'})[op.kind]||'Processing controller request'}
-function publicJob(j){if(!j)return null;return {id:j.id,status:j.status,stage:j.pending?'Waiting for Trimlight cloud data to update: '+stepLabel(j.ops[j.cursor])+' · '+(j.pending.attempts||0)+' checks · '+Math.floor((j.pending.elapsedMs||0)/1000)+'s / 180s':stepLabel(j.ops[j.cursor]),window:j.plan.window,calendarSlots:j.plan.calendarSlots,patternSlots:j.plan.patternSlots,cursor:j.cursor,total:j.ops.length,error:j.error||null,completedAt:j.completedAt||null,testMode:!!j.testMode,testKind:j.testKind||'design',phase:j.pending?'verify-write':'prepare-write'};}
+function publicJob(j){if(!j)return null;return {id:j.id,status:j.status,stage:j.pending?'Waiting for Trimlight cloud data to update: '+stepLabel(j.ops[j.cursor])+' · '+(j.pending.attempts||0)+' checks · '+Math.floor((j.pending.elapsedMs||0)/1000)+'s / 180s':stepLabel(j.ops[j.cursor]),window:j.plan.window,calendarSlots:j.plan.calendarSlots,patternSlots:j.plan.patternSlots,cursor:j.cursor,total:j.ops.length,error:j.error||null,completedAt:j.completedAt||null,testMode:!!j.testMode,testKind:j.testKind||'design',canReviewRejected:!!(j.status==='failed'&&j.testKind==='calendar'&&j.failure?.code===12000&&j.pending?.path==='calendar/save'),phase:j.pending?'verify-write':'prepare-write'};}
 export async function rollingStatus(env){const r=await readState(env),job=await document(env,'rolling-job');let plan,error;try{plan=rollingPlan(r.state)}catch(e){error=e.message}return {...r,job:publicJob(job),plan:plan&&{window:plan.window,calendarSlots:plan.calendarSlots,patternSlots:plan.patternSlots,roundMinutes:5},error};}
 export async function rollingAction(env,body){return lease(env,async()=>{
  const r=await readState(env),s=r.state;let revision=r.revision;let job=await document(env,'rolling-job');let readOnlyRecheck=false;
@@ -21,6 +21,21 @@ export async function rollingAction(env,body){return lease(env,async()=>{
   const next=repairState(s,body.patternId,body.mode,body.transferProtection===true);
   addEvent(next,'Created compatible copy and reassigned its calendar rules');
   return {state:next,revision:await writeState(env,next,revision)};
+ }
+ if(body.action==='reviewRejectedCalendar'){
+  if(!job||job.status!=='failed'||job.testKind!=='calendar'||job.failure?.code!==12000||job.pending?.path!=='calendar/save')throw new Error('No explicitly rejected calendar test is available for review.');
+  if(body.jobId!==job.id||body.revision!==revision||body.confirmReview!==true)throw new Error('Refresh and confirm the rejected calendar review.');
+  await refreshShadow(env,s.settings.timezone);const current=await controllerRead(env,s.settings.timezone);
+  const baseline=job.verifiedDevice||job.before;
+  const added=current.calendar.filter(c=>!baseline.calendar.some(b=>b.id===c.id));
+  const withoutAdded={...current,calendar:current.calendar.filter(c=>baseline.calendar.some(b=>b.id===c.id))};
+  if(fingerprint(withoutAdded)!==fingerprint(baseline)||added.length>1||added.some(c=>calendarSignature(c)!==calendarSignature(job.pending.payload)))throw new Error('Controller changes exceed the rejected test or its matching manually created entry. Job remains paused.');
+  await persist(env,'rolling-archive-'+job.id,job);
+  job.status='rejectionReviewed';job.error=null;job.reviewedAt=new Date().toISOString();job.reviewedDevice=current;
+  s.device=current;s.snapshotAt=job.reviewedAt;s.snapshotSource='Read-only rejected calendar review';
+  s.settings.rollingEnabled=false;s.settings.schedulerEnabled=false;s.rolling={...publicJob(job),roundMinutes:5};
+  await persist(env,'rolling-job',job);addEvent(s,'Rejected calendar test archived after read-only verification. No controller write sent.');
+  return {state:s,revision:await writeState(env,s,revision),job:publicJob(job)};
  }
  if(body.action==='acceptReset'){
   if(!job||job.status!=='failed')throw new Error('No failed sync requires a new baseline.');
@@ -139,7 +154,7 @@ export async function rollingAction(env,body){return lease(env,async()=>{
     payload=calendarPayload(op.row,job.plan.mapping[op.row.patternId],op.id);
     if(!Number.isInteger(payload.effectId)||!device.effects.some(e=>e.id===payload.effectId))throw new Error('Calendar references an unverified design.');
     if(device.calendar.some(c=>calendarSignature(c)===calendarSignature(payload))){payload=null;job.cursor++;}
-    else{payload.id=Array.from({length:60},(_,i)=>i).find(id=>!device.calendar.some(c=>c.id===id));if(payload.id===undefined)throw new Error('No free calendar slot.');path='calendar/save';}
+    else{payload.id=Array.from({length:job.testKind==='calendar'?59:60},(_,i)=>job.testKind==='calendar'?i+1:i).find(id=>!device.calendar.some(c=>c.id===id));if(payload.id===undefined)throw new Error(job.testKind==='calendar'?'No unused positive calendar ID (1–59) is available. This test will not use ID 0.':'No free calendar slot.');path='calendar/save';}
    }
    if(op.kind==='verify'){
     const expected=job.plan.rows.map((row,i)=>calendarSignature(calendarPayload(row,job.plan.mapping[row.patternId],i))).sort();
