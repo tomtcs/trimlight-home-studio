@@ -9,7 +9,7 @@ test('discovery signs a read-only request without requiring or saving a device I
  assert.equal(r.status,200);assert.deepEqual(await r.json(),{devices:[{name:'House',deviceId:'one',online:true},{name:'Shed',deviceId:'two',online:false}]});assert.equal(env.TRIMLIGHT_DEVICE_ID,undefined);
 });
 test('discovery permits empty results and only reuses a secret for the same client',async()=>{
- const env={TRIMLIGHT_CLIENT_ID:'client',TRIMLIGHT_CLIENT_SECRET:'secret',FETCH:async()=>Response.json({code:0,payload:{data:[]}})};
+ const env={CONTROLLER_PROTECTION:'off',TRIMLIGHT_CLIENT_ID:'client',TRIMLIGHT_CLIENT_SECRET:'secret',FETCH:async()=>Response.json({code:0,payload:{data:[]}})};
  assert.deepEqual(await (await credentialsApi(request({clientId:'client'}),env,{})).json(),{devices:[]});
  assert.equal((await credentialsApi(request({clientId:'other'}),env,{})).status,400);
 });

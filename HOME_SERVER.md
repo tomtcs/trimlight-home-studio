@@ -61,3 +61,26 @@ Recreate any needed calendar assignments using native looks before enabling sche
 Controller-specific preset assignments are removed from retained Trimlight looks.
 An existing failed native sync stays failed; this migration does not bypass its
 recovery checks or resolve the underlying Trimlight firmware/API issue.
+
+## Temporary controller protection (default)
+
+Stored-pattern writes/deletes, calendar writes/deletes, restores and ordinary live
+previews are blocked at the API client. Both app schedulers are paused by the
+heartbeat. The Evening planner provides administrator-only controlled tests:
+capture a baseline, lights off, native Timer Mode, a dim white static preview,
+and a test that starts in one minute and runs for one minute. Check iOS access
+after every test. These operations have not been proven safe on real hardware.
+The static test uses one active color run without zero-count padding.
+
+Timed cleanup requires the server to remain running. It requests Timer Mode once
+and does not retry after failure; manually select Timer Mode if needed. Overdue
+scheduled starts expire after 90 seconds rather than unexpectedly starting after
+a long outage. Request diagnostics retain the latest 60 entries without headers,
+secrets or device IDs; read responses record counts/firmware, while the complete
+baseline is preserved in workspace exports. A sending entry without a response
+means the outcome is unknown, not that the controller rejected the request.
+
+Existing failed sync jobs and backups remain intact. A separately deployed cloud
+app or automation must be paused separately. For controlled development only,
+CONTROLLER_PROTECTION=off restores the legacy paths; do not disable protection
+on the affected controller while the firmware/API issue remains unresolved.

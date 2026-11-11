@@ -1,3 +1,4 @@
+import {protectedController,checkControllerRequest,recordRequest,diagnostics,protectionTest,protectionTick} from './controller-protection.mjs';
 import {householdState,initialState,validateState,compile,selectionColors,effectPayload,dayPlan,dateKey,plusDay,zonedParts,uuid} from './domain.mjs';
 import {upgradeCatalog} from './catalog-upgrade.mjs';
 const JSON_HEADERS={'content-type':'application/json','cache-control':'no-store'};
@@ -19,6 +20,7 @@ export async function lease(env,fn){
 }
 export function addEvent(state,label,status='success'){state.events=[{id:uuid(),at:new Date().toISOString(),label,status},...state.events].slice(0,100)}
 export async function trim(env,path,payload,method='POST',extra={}){
+ checkControllerRequest(env,path,payload);
  if(!env.TRIMLIGHT_CLIENT_ID||!env.TRIMLIGHT_CLIENT_SECRET||!env.TRIMLIGHT_DEVICE_ID)throw new Error('Trimlight credentials are not configured on this server.');
  const t=String(Date.now()),message=`Trimlight|${env.TRIMLIGHT_CLIENT_ID}|${t}`;
  const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(env.TRIMLIGHT_CLIENT_SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign']);
@@ -27,8 +29,10 @@ export async function trim(env,path,payload,method='POST',extra={}){
  let url='https://trimlight.ledhue.com/trimlight/v1/oauth/resources/device/'+path;
  if(method==='GET')url+='?'+new URLSearchParams({deviceId:env.TRIMLIGHT_DEVICE_ID});
 
+ await recordRequest(env,{path,method,payload:payload||null,status:'sending'});
  const res=await (env.FETCH||fetch)(url,{method,headers:{'Content-Type':'application/json','Authorization':token,'S-ClientId':env.TRIMLIGHT_CLIENT_ID,'S-Timestamp':t},...(method==='GET'?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(25000)});
- if(!res.ok)throw new Error(`Trimlight returned HTTP ${res.status}. No automatic retry was made.`);const data=await res.json();
+ await recordRequest(env,{path,status:'http-response',httpStatus:res.status});
+ if(!res.ok)throw new Error(`Trimlight returned HTTP ${res.status}. No automatic retry was made.`);const data=await res.json();await recordRequest(env,{path,status:'response',code:data.code,response:data.payload&&path==='get'?{effects:data.payload.effects?.length,calendar:data.payload.calendar?.length,firmware:data.payload.fwVersionName}:data.payload||null});
  if(data.code!==0)throw Object.assign(new Error(`Trimlight: ${String(data.desc||'request rejected').slice(0,200)} (${data.code}).`),{code:data.code});return data;
 }
 export async function syncSnapshot(env){
@@ -53,12 +57,14 @@ export async function controllerAction(env,body){
  return {state,revision:await writeState(env,state,revision),message:'Controller request accepted. Verify the result at your house.'};});
 }
 export async function setScheduler(env,enabled){
+ if(protectedController(env))throw new Error('Protection mode pauses automatic scheduling. Use the one-minute scheduled test on the Evening planner.');
  const existing=await readState(env);if(enabled&&existing.state.settings.rollingEnabled)throw new Error('Pause monthly controller sync before enabling the live home-server scheduler.');
  if(!env.LOCAL_RUNNER)throw new Error('Automatic scheduling runs in the home-server container. This hosted app provides the planner.');
  return lease(env,async()=>{const {state,revision}=await readState(env);await trim(env,'update',{switchState:enabled?0:2});state.settings.schedulerEnabled=!!enabled;state.runtime={...state.runtime,lastApplied:null,holdUntil:0,preview:false};addEvent(state,enabled?'Home-server scheduler enabled; native Timer Mode suspended':'Scheduler disabled; native Timer Mode requested');return {state,revision:await writeState(env,state,revision)};});
 }
 export async function tick(env,now=new Date()){
  if(!env.LOCAL_RUNNER)return;
+ if(protectedController(env))return protectionTick(env);
  return lease(env,async()=>{const {state,revision}=await readState(env);
  if(!state.settings.schedulerEnabled){if(state.runtime.preview&&state.runtime.holdUntil<Date.now()){await trim(env,'update',{switchState:2});state.runtime.preview=false;addEvent(state,'Expired preview: Timer Mode requested');await writeState(env,state,revision)}return;}
  if(state.runtime.holdUntil>+now)return;
@@ -76,9 +82,12 @@ export async function tick(env,now=new Date()){
 export async function handleApi(request,env){
  try{
  const path=new URL(request.url).pathname.replace(/^\/api\/?/,'');
+ if(path==='controller-diagnostics'&&request.method==='GET')return json(await diagnostics(env));
+ if(path==='controller-test'&&request.method==='POST')return json(await protectionTest(env,await request.json()));
+ if(path==='rolling'&&request.method==='POST'&&protectedController(env))throw new Error('Controller-protection mode blocks controller sync and recovery operations. Your existing backups remain available.');
  if(path==='rolling'||path==='rolling-backup'){const rolling=await import('./rolling.mjs');if(request.method==='GET')return json(path==='rolling-backup'?await rolling.rollingBackup(env):await rolling.rollingStatus(env));if(request.method==='POST'&&path==='rolling'){const body=await request.json();return json(await rolling.rollingAction(env,body));}}
 
- if(request.method==='GET'&&path==='state'){const r=await readState(env);return json({...r,connected:!!env.TRIMLIGHT_CLIENT_SECRET,localRunner:!!env.LOCAL_RUNNER})}
+ if(request.method==='GET'&&path==='state'){const r=await readState(env);return json({...r,controllerProtected:protectedController(env),connected:!!env.TRIMLIGHT_CLIENT_SECRET,localRunner:!!env.LOCAL_RUNNER})}
  if(request.method==='GET'&&path==='export'){const r=await readState(env);return new Response(JSON.stringify(r.state,null,2),{headers:{...JSON_HEADERS,'content-disposition':'attachment; filename="roofline-studio-backup.json"'}})}
  if(request.method!=='POST')return json({error:'Not found'},404);
  const text=await request.text();if(text.length>1900000)return json({error:'Backup exceeds 1.9 MB. Resize the property photos.'},413);

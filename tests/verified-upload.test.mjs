@@ -5,7 +5,7 @@ import {readState,writeState} from '../shared/service.mjs';
 import {rollingAction,rollingStatus,rollingBackup} from '../shared/rolling.mjs';
 import {effectPayload} from '../shared/domain.mjs';
 async function fixture({stale=0,parseError=false,lostAck=false}={}){
- const calls=[],waits=[];const env={DB:openDatabase(':memory:'),LOCAL_RUNNER:true,TRIMLIGHT_CLIENT_ID:'test',TRIMLIGHT_CLIENT_SECRET:'test',TRIMLIGHT_DEVICE_ID:'test',UPLOAD_WAIT:async ms=>waits.push(ms)};
+ const calls=[],waits=[];const env={DB:openDatabase(':memory:'),LOCAL_RUNNER:true,CONTROLLER_PROTECTION:'off',TRIMLIGHT_CLIENT_ID:'test',TRIMLIGHT_CLIENT_SECRET:'test',TRIMLIGHT_DEVICE_ID:'test',UPLOAD_WAIT:async ms=>waits.push(ms)};
  let {state,revision}=await readState(env);
  const effect=effectPayload({category:1,mode:0,brightness:100,speed:50,pixels:[{index:0,count:5,color:255,disable:false}]});
  state.patterns=[{id:'blue',name:'Blue',effect,protected:false}];state.rules=[{id:'all',name:'All year',patternId:'blue',startDate:'01-01',endDate:'12-31',year:null,enabled:true,priority:1,kind:'fixed',fixedStart:'17:00',end:'23:00',offset:0}];

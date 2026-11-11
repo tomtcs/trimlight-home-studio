@@ -5,7 +5,7 @@ import {readState,writeState} from '../shared/service.mjs';
 import {rollingAction,rollingBackup} from '../shared/rolling.mjs';
 
 async function fixture(){
- const calls=[];const env={DB:openDatabase(':memory:'),LOCAL_RUNNER:true,TRIMLIGHT_CLIENT_ID:'test',TRIMLIGHT_CLIENT_SECRET:'test',TRIMLIGHT_DEVICE_ID:'test'};
+ const calls=[];const env={DB:openDatabase(':memory:'),LOCAL_RUNNER:true,CONTROLLER_PROTECTION:'off',TRIMLIGHT_CLIENT_ID:'test',TRIMLIGHT_CLIENT_SECRET:'test',TRIMLIGHT_DEVICE_ID:'test'};
  const {state,revision}=await readState(env);
  const before={...state.device,connectivity:1};
  const job={id:'failed-job',status:'failed',cursor:0,ops:[{kind:'verify'}],plan:{window:{},calendarSlots:0,patternSlots:0},before,backupKey:'private',error:'old error'};

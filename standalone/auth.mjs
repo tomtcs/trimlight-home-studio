@@ -53,7 +53,7 @@ export async function createAuth(db,config){
 export function authorize(user,path,method,body,state){
  if(!user)fail('Please sign in.',401);
  if(user.role==='admin')return;
- if(path==='/api/credentials'||path==='/api/rolling-backup')fail('Administrator access required.',403);
+ if(path==='/api/credentials'||path==='/api/rolling-backup'||path==='/api/controller-diagnostics'||path==='/api/controller-test')fail('Administrator access required.',403);
  if(method==='GET')return;
  if(user.role==='viewer')fail('Viewer accounts cannot make changes.',403);
  if(!['/api/state','/api/action'].includes(path))fail('Administrator access required.',403);
