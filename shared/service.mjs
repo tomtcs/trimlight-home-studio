@@ -34,7 +34,7 @@ export async function trim(env,path,payload,method='POST',extra={}){
 export async function syncSnapshot(env){
  return lease(env,async()=>{const {state,revision}=await readState(env);let refreshed=true;try{await trim(env,'notify-update-shadow',undefined,'POST')}catch{refreshed=false}
  const p=zonedParts(new Date(),state.settings.timezone);const currentDate={year:+p.year-2000,month:+p.month,day:+p.day,hours:+p.hour,minutes:+p.minute,seconds:+p.second,weekday:new Date(`${p.year}-${p.month}-${p.day}T12:00:00Z`).getUTCDay()+1};
- const r=await trim(env,'get',undefined,'POST',{currentDate});state.device=r.payload;state.snapshotAt=new Date().toISOString();state.snapshotSource=refreshed?'Trimlight cloud readback':'Trimlight cached cloud snapshot';
+ const r=await trim(env,'get',undefined,'POST',{currentDate});if(!r.payload||!Array.isArray(r.payload.effects)||!Array.isArray(r.payload.calendar)||!Array.isArray(r.payload.ports))throw new Error('Controller returned an incomplete configuration. The previous snapshot was preserved.');state.device=r.payload;state.snapshotAt=new Date().toISOString();state.snapshotSource=refreshed?'Trimlight cloud readback':'Trimlight cached cloud snapshot';
  addEvent(state,'Read controller configuration');return {state,revision:await writeState(env,state,revision)};});
 }
 async function preview(env,state,effect,label){

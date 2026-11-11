@@ -1,0 +1,9 @@
+import {useEffect,useState} from 'react';
+export default function SyncProgress({value,onClose}:any){
+ const [now,setNow]=useState(Date.now());
+ useEffect(()=>{const id=setInterval(()=>setNow(Date.now()),1000);return()=>clearInterval(id)},[]);
+ const elapsed=Math.max(0,Math.floor(((value.status==='running'?now:value.updated)-value.started)/1000));
+ const waiting=Math.max(0,Math.floor((now-value.updated)/1000));
+ const percent=value.total?Math.min(value.status==='complete'?100:99,Math.floor(100*value.done/value.total)):null;
+ return <div className="modal-backdrop top"><section className="modal" role="dialog" aria-modal="true" aria-label="Controller sync progress"><span className="eyebrow">CONTROLLER SYNC</span><h2>{value.status==='complete'?'Sync complete':value.status==='failed'?'Sync needs attention':value.status==='paused'?'Sync unfinished':'Sync in progress'}</h2><div style={{fontSize:'3rem',fontWeight:700,color:'var(--accent,#60d884)'}}>{value.status==='complete'?'100%':percent===null?'Preparing…':`${percent}%`}</div><progress aria-label="Completed sync steps" max={100} value={value.status==='complete'?100:percent??undefined} style={{width:'100%',height:18,accentColor:'#60d884'}}/><p role="status">{value.stage}</p><p className="muted">Elapsed {Math.floor(elapsed/60)}m {elapsed%60}s{value.total?` · ${value.done} / ${value.total} steps`:''}</p>{value.status==='running'&&<p className="small muted">Keep this tab open. Waiting {waiting}s for the current request.{waiting>=30?' This is taking longer than usual; completion has not been confirmed.':''}</p>}<pre aria-label="Sync activity log" style={{maxHeight:220,overflow:'auto',whiteSpace:'pre-wrap',fontSize:12}}>{value.logs.join('\n')}</pre>{value.status!=='running'&&<button className="primary" onClick={onClose}>Close</button>}</section></div>;
+}
