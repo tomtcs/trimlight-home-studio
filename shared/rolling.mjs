@@ -2,7 +2,7 @@ import {repairState} from './sync-repair.mjs';
 import {readState,writeState,lease,trim,addEvent} from './service.mjs';
 import {zonedParts,effectPayload,uuid} from './domain.mjs';
 import {rollingPlan,windowFor,signature,effectSignature,calendarSignature,calendarPayload} from './rolling-plan.mjs';
-import {fingerprint,expectedAfter,matchesExpected} from './upload-verification.mjs';
+import {fingerprint,expectedAfter,matchesExpected,controllerName} from './upload-verification.mjs';
 async function document(env,id){const r=await env.DB.prepare('SELECT data,revision FROM documents WHERE id=?').bind(id).first();return r?JSON.parse(r.data):null;}
 async function persist(env,id,data){await env.DB.prepare('INSERT INTO documents (id,data,revision) VALUES (?,?,0) ON CONFLICT(id) DO UPDATE SET data=excluded.data,revision=documents.revision+1').bind(id,JSON.stringify(data)).run();}
 async function refreshShadow(env,tz){const p=zonedParts(new Date(),tz);await trim(env,'notify-update-shadow',undefined,'POST',{currentDate:{year:+p.year-2000,month:+p.month,day:+p.day,weekday:new Date(`${p.year}-${p.month}-${p.day}T12:00:00Z`).getUTCDay()+1,hours:+p.hour,minutes:+p.minute,seconds:+p.second}});await (env.UPLOAD_WAIT||((ms)=>new Promise(resolve=>setTimeout(resolve,ms))))(3000);}
@@ -37,6 +37,11 @@ export async function rollingAction(env,body){return lease(env,async()=>{
   const nextRevision=await writeState(env,s,revision);
   await persist(env,'rolling-job',job);
   return {state:s,revision:nextRevision,job:publicJob(job)};
+ }
+ if(body.action==='recheckUpload'){
+  if(!job||job.status!=='failed'||job.uploaderVersion!==2||job.pending?.phase!=='verifying'||body.jobId!==job.id)throw new Error('No acknowledged upload is available for a read-only recheck.');
+  job.status='running';job.error=null;job.pending.attempts=2;
+  body={action:'step',jobId:job.id};
  }
  if(body.action==='recover'){
   if(!job||job.status!=='failed')throw new Error('No failed job requires recovery verification.');await refreshShadow(env,s.settings.timezone);const restored=await controllerRead(env,s.settings.timezone);if(fingerprint(restored)!==fingerprint(job.before))throw new Error(`Recovery is not verified. Backup: ${job.before.effects.length} designs and ${job.before.calendar.length} calendar entries; current readback: ${restored.effects.length} designs and ${restored.calendar.length} calendar entries. Counts alone do not establish a match. Download the pre-sync backup and contact support before another restore.`);job.status='restored';job.restored=true;job.error='Original controller configuration restored and verified.';await persist(env,'rolling-job',job);s.device=restored;s.rolling={...publicJob(job),roundMinutes:5};addEvent(s,job.error);return {state:s,revision:await writeState(env,s,revision),job:publicJob(job)};
@@ -76,13 +81,13 @@ export async function rollingAction(env,body){return lease(env,async()=>{
   const device=await controllerRead(env,s.settings.timezone);
   job.lastRead={at:new Date().toISOString(),effects:device.effects.length,calendar:device.calendar.length};
   if(job.pending){
-   job.pending.attempts=(job.pending.attempts||0)+1;
+   job.pending.lastReadback=device;job.pending.attempts=(job.pending.attempts||0)+1;
    if(!matchesExpected(device,job.pending)){
     if(job.pending.attempts>=3)throw new Error('Fresh controller readback did not match the acknowledged write after three checks. No further changes were sent.');
     await persist(env,'rolling-job',job);return {job:publicJob(job)};
    }
    job.verifiedDevice=device;
-   job.history=[...(job.history||[]),{step:job.cursor,path:job.pending.path,payload:job.pending.payload,responseId:job.pending.responseId,verifiedAt:new Date().toISOString()}];
+   job.history=[...(job.history||[]),{step:job.cursor,path:job.pending.path,payload:job.pending.payload,responseId:job.pending.responseId,controllerName:job.pending.path==='effect/save'?device.effects.find(e=>e.id===job.pending.responseId)?.name:undefined,verifiedAt:new Date().toISOString()}];
    job.pending=null;job.cursor++;
   }else{
    if(fingerprint(device)!==fingerprint(job.verifiedDevice))throw new Error('Controller configuration changed outside this verified upload. No write was sent.');
@@ -101,7 +106,7 @@ export async function rollingAction(env,body){return lease(env,async()=>{
      if(device.effects.length>=60)throw new Error('Controller pattern capacity changed.');
      const effect=effectPayload(op.pattern.effect);
      if(effect.category===1&&(effect.mode>16||effect.pixels.some(p=>p.count>60)))throw new Error('Design exceeds documented API limits. No write was sent.');
-     path='effect/save';payload={id:-1,name:op.pattern.name,...effect};
+     path='effect/save';payload={id:-1,name:controllerName(op.pattern.name),...effect};
     }
    }
    if(op.kind==='saveCalendar'){

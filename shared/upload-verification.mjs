@@ -11,4 +11,16 @@ export function expectedAfter(device,path,payload,id){
  else throw new Error('Unsupported upload operation');
  return next;
 }
-export function matchesExpected(current,pending){return fingerprint(current)===fingerprint(pending.expected)&&(pending.path!=='update'||current.switchState===pending.expected.switchState);}
+export function controllerName(name){return String(name).replace(/\u00c2(?=\u00b7)/g,'').replace(/[\u2018\u2019]/g,"'").replace(/[\u00b7\u2013\u2014]/g,'-').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^\x20-\x7e]/g,'').trim()||'Studio design';}
+export function matchesExpected(current,pending){
+ const expected=structuredClone(pending.expected);
+ // A newly saved name is display metadata. Keep strict comparisons for all
+ // effect parameters, IDs, existing names, and every other configuration field.
+ if(pending.path==='effect/save'){
+  const saved=current.effects.find(e=>e.id===pending.responseId);
+  const target=expected.effects.find(e=>e.id===pending.responseId);
+  if(!saved||!target)return false;
+  target.name=saved.name;
+ }
+ return fingerprint(current)===fingerprint(expected)&&(pending.path!=='update'||current.switchState===expected.switchState);
+}

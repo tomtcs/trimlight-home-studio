@@ -15,6 +15,6 @@ export function repairState(state,id,mode,unlock){
  if(state.patterns.length>=5000)throw new Error('The library is full. Remove an unused design before making a copy.');
  const original=state.patterns.find(p=>p.id===id);if(!original)throw new Error('Design no longer exists. Recheck sync.');
  if(original.protected&&!unlock)throw new Error('Confirm transferring protection to the compatible copy.');
- const copy={...structuredClone(original),id:uuid(),name:original.name.slice(0,69)+' · API copy',effect:compatibleEffect(original.effect,mode),source:'Compatible copy',updatedAt:new Date().toISOString()};
+ const copy={...structuredClone(original),id:uuid(),name:original.name.slice(0,69)+' - API copy',effect:compatibleEffect(original.effect,mode),source:'Compatible copy',updatedAt:new Date().toISOString()};
  return {...state,patterns:[...state.patterns.map(p=>p.id===id&&unlock?{...p,protected:false}:p),copy],rules:state.rules.map(r=>r.patternId===id?{...r,patternId:copy.id}:r)};
 }

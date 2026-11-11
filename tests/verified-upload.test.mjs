@@ -79,3 +79,17 @@ test('calendar and effect deletions are individually verified before new uploads
  assert.deepEqual(paths.slice(0,3),['calendar/delete','effect/delete','effect/save']);
  const mutations=calls.filter(c=>/delete|save/.test(c.path));assert.equal(mutations.length,paths.filter(p=>p!=='update').length);
 });
+test('new design name changes do not mask altered colors or unrelated configuration',async()=>{
+ const {env,getLive}=await fixture();let {job}=await rollingAction(env,{action:'testDesign'});({job}=await step(env,job.id));
+ getLive().effects[0].name='Blue ?';getLive().effects[0].pixels[0].color=1234;
+ for(let i=0;i<3;i++)({job}=await step(env,job.id));assert.equal(job.status,'failed');
+ getLive().effects[0].pixels[0].color=255;
+ const r=await rollingAction(env,{action:'recheckUpload',jobId:job.id});assert.equal(r.job.status,'complete');
+ assert.equal((await rollingBackup(env)).diagnostics.verifiedWrites[0].controllerName,'Blue ?');
+});
+test('read-only recheck never issues a second design save',async()=>{
+ const {env,calls}=await fixture({stale:3});let {job}=await rollingAction(env,{action:'testDesign'});
+ for(let i=0;i<4;i++)({job}=await step(env,job.id));assert.equal(job.status,'failed');
+ const count=calls.length;const result=await rollingAction(env,{action:'recheckUpload',jobId:job.id});
+ assert.equal(result.job.status,'complete');assert.deepEqual(calls.slice(count).map(c=>c.path),['notify-update-shadow','get']);
+});
