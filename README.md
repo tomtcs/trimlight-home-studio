@@ -64,6 +64,8 @@ This public source snapshot excludes the original household data, credentials, c
 This is an independent project, not an official Trimlight product or an endorsed application. Trimlight names and supplied logos remain the property of their respective owners. No trademark rights are granted.
 
 ## License
-This project's original source code and documentation are licensed under the **GNU General Public License, version 3 or (at your option) any later version (GPL-3.0-or-later)**. See [LICENSE](LICENSE) for the full license text.
+Trimlight Home Studio's original source code and documentation are available under the **MIT License**. See [LICENSE](LICENSE) for the full text.
 
-Community members may use, modify, redistribute, and fork the project, subject to the GPL's requirements, including preservation of applicable notices and provision of corresponding source code when required. Independent forks and contributions are welcome. This license does not grant rights to third-party trademarks, branding, or other materials not owned by the project's contributors.
+You may use, copy, modify, fork, distribute, sublicense, and commercially use the project, including in independently developed or proprietary applications, provided the copyright and license notices are retained as required by MIT. Contributions and community forks are welcome.
+
+Third-party libraries, images, trademarks, and logos remain subject to their respective licenses and ownership rights. This is an independent project and is not affiliated with or endorsed by Trimlight.
