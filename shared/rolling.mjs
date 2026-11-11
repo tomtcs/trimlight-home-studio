@@ -18,6 +18,25 @@ export async function rollingAction(env,body){return lease(env,async()=>{
   addEvent(next,'Created compatible copy and reassigned its calendar rules');
   return {state:next,revision:await writeState(env,next,revision)};
  }
+ if(body.action==='acceptReset'){
+  if(!job||job.status!=='failed')throw new Error('No failed sync requires a new baseline.');
+  if(body.confirmReset!==true||body.jobId!==job.id||body.revision!==revision)throw new Error('Refresh and confirm that this controller was reset and works in Trimlight.');
+  await refreshShadow(env,s.settings.timezone);
+  const current=await controllerRead(env,s.settings.timezone);
+  // Ensure the snapshot is usable before clearing the failed-job interlock.
+  fingerprint(current);
+  await persist(env,'rolling-archive-'+job.id,job);
+  await persist(env,'rolling-baseline-'+job.id,{at:new Date().toISOString(),device:current});
+  job={...job,status:'resetAccepted',error:null,resetAcceptedAt:new Date().toISOString(),restored:false};
+  s.device=current;s.snapshotAt=job.resetAcceptedAt;s.snapshotSource='Accepted post-reset controller';
+  s.settings.rollingEnabled=false;s.settings.schedulerEnabled=false;
+  s.runtime={...s.runtime,preview:false,lastApplied:null,holdUntil:0};
+  s.rolling={...publicJob(job),roundMinutes:5};
+  addEvent(s,'Accepted reset controller baseline; previous job archived; scheduling paused');
+  const nextRevision=await writeState(env,s,revision);
+  await persist(env,'rolling-job',job);
+  return {state:s,revision:nextRevision,job:publicJob(job)};
+ }
  if(body.action==='recover'){
   if(!job||job.status!=='failed')throw new Error('No failed job requires recovery verification.');await refreshShadow(env,s.settings.timezone);const restored=await controllerRead(env,s.settings.timezone);if(fingerprint(restored)!==fingerprint(job.before))throw new Error(`Recovery is not verified. Backup: ${job.before.effects.length} designs and ${job.before.calendar.length} calendar entries; current readback: ${restored.effects.length} designs and ${restored.calendar.length} calendar entries. Counts alone do not establish a match. Download the pre-sync backup and contact support before another restore.`);job.status='restored';job.restored=true;job.error='Original controller configuration restored and verified.';await persist(env,'rolling-job',job);s.device=restored;s.rolling={...publicJob(job),roundMinutes:5};addEvent(s,job.error);return {state:s,revision:await writeState(env,s,revision),job:publicJob(job)};
  }
@@ -72,7 +91,7 @@ export async function rollingAction(env,body){return lease(env,async()=>{
  }catch(error){
   job.status='failed';job.error=error.message;s.settings.rollingEnabled=false;
   job.failure={at:new Date().toISOString(),step:job.cursor,operation:job.ops[job.cursor]?.kind,previousOperation:job.ops[job.cursor-1]?.kind||null};
-  try{await trim(env,'data/backup/restore',{backupKey:job.backupKey});await refreshShadow(env,s.settings.timezone);const restored=await controllerRead(env,s.settings.timezone);if(fingerprint(restored)!==fingerprint(job.before))throw new Error('Restore readback differs from backup.');s.device=restored;job.error+=' Original controller configuration restored and verified.';job.restored=true;}catch(e){job.error+=' Recovery needs attention: '+e.message;}
+  if(error.code===12006){job.error+=' Sync paused. No automatic restore was attempted because controller data could not be parsed.';}else try{await trim(env,'data/backup/restore',{backupKey:job.backupKey});await refreshShadow(env,s.settings.timezone);const restored=await controllerRead(env,s.settings.timezone);if(fingerprint(restored)!==fingerprint(job.before))throw new Error('Restore readback differs from backup.');s.device=restored;job.error+=' Original controller configuration restored and verified.';job.restored=true;}catch(e){job.error+=' Recovery needs attention: '+e.message;}
   await persist(env,'rolling-job',job);s.rolling={...publicJob(job),roundMinutes:5};addEvent(s,job.error,'error');await writeState(env,s,revision);return {job:publicJob(job)};
  }
 });}

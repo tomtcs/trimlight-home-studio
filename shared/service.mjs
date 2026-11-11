@@ -29,7 +29,7 @@ export async function trim(env,path,payload,method='POST',extra={}){
 
  const res=await (env.FETCH||fetch)(url,{method,headers:{'Content-Type':'application/json','Authorization':token,'S-ClientId':env.TRIMLIGHT_CLIENT_ID,'S-Timestamp':t},...(method==='GET'?{}:{body:JSON.stringify(body)}),signal:AbortSignal.timeout(25000)});
  if(!res.ok)throw new Error(`Trimlight returned HTTP ${res.status}. No automatic retry was made.`);const data=await res.json();
- if(data.code!==0)throw new Error(`Trimlight: ${String(data.desc||'request rejected').slice(0,200)} (${data.code}).`);return data;
+ if(data.code!==0)throw Object.assign(new Error(`Trimlight: ${String(data.desc||'request rejected').slice(0,200)} (${data.code}).`),{code:data.code});return data;
 }
 export async function syncSnapshot(env){
  return lease(env,async()=>{const {state,revision}=await readState(env);let refreshed=true;try{await trim(env,'notify-update-shadow',undefined,'POST')}catch{refreshed=false}
