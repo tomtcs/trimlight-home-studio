@@ -1,3 +1,4 @@
+import {isWled,wledSync,wledAction,wledScheduler,wledTick,wledPresets} from './wled.mjs';
 import {householdState,initialState,validateState,compile,selectionColors,effectPayload,dayPlan,dateKey,plusDay,zonedParts,uuid} from './domain.mjs';
 import {upgradeCatalog} from './catalog-upgrade.mjs';
 const JSON_HEADERS={'content-type':'application/json','cache-control':'no-store'};
@@ -19,6 +20,7 @@ export async function lease(env,fn){
 }
 export function addEvent(state,label,status='success'){state.events=[{id:uuid(),at:new Date().toISOString(),label,status},...state.events].slice(0,100)}
 export async function trim(env,path,payload,method='POST',extra={}){
+ if(isWled(env))throw new Error('Trimlight requests are disabled while WLED is selected.');
  if(!env.TRIMLIGHT_CLIENT_ID||!env.TRIMLIGHT_CLIENT_SECRET||!env.TRIMLIGHT_DEVICE_ID)throw new Error('Trimlight credentials are not configured on this server.');
  const t=String(Date.now()),message=`Trimlight|${env.TRIMLIGHT_CLIENT_ID}|${t}`;
  const key=await crypto.subtle.importKey('raw',new TextEncoder().encode(env.TRIMLIGHT_CLIENT_SECRET),{name:'HMAC',hash:'SHA-256'},false,['sign']);
@@ -32,6 +34,7 @@ export async function trim(env,path,payload,method='POST',extra={}){
  if(data.code!==0)throw Object.assign(new Error(`Trimlight: ${String(data.desc||'request rejected').slice(0,200)} (${data.code}).`),{code:data.code});return data;
 }
 export async function syncSnapshot(env){
+ if(isWled(env))return wledSync(env);
  return lease(env,async()=>{const {state,revision}=await readState(env);let refreshed=true;try{await trim(env,'notify-update-shadow',undefined,'POST')}catch{refreshed=false}
  const p=zonedParts(new Date(),state.settings.timezone);const currentDate={year:+p.year-2000,month:+p.month,day:+p.day,hours:+p.hour,minutes:+p.minute,seconds:+p.second,weekday:new Date(`${p.year}-${p.month}-${p.day}T12:00:00Z`).getUTCDay()+1};
  const r=await trim(env,'get',undefined,'POST',{currentDate});if(!r.payload||!Array.isArray(r.payload.effects)||!Array.isArray(r.payload.calendar)||!Array.isArray(r.payload.ports))throw new Error('Controller returned an incomplete configuration. The previous snapshot was preserved.');state.device=r.payload;state.snapshotAt=new Date().toISOString();state.snapshotSource=refreshed?'Trimlight cloud readback':'Trimlight cached cloud snapshot';
@@ -44,21 +47,24 @@ async function preview(env,state,effect,label){
  state.runtime={...state.runtime,preview:true,holdUntil:Date.now()+120000};addEvent(state,`Preview requested: ${label}`);
 }
 export async function controllerAction(env,body){
+ if(isWled(env))return wledAction(env,body);
  return lease(env,async()=>{const {state,revision}=await readState(env);
  if(body.action==='resume'){await trim(env,'update',{switchState:2});state.settings.schedulerEnabled=false;state.runtime={...state.runtime,preview:false,holdUntil:0,lastApplied:null};addEvent(state,'Timer Mode requested');}
  else if(body.action==='off'){await trim(env,'update',{switchState:0});state.runtime={...state.runtime,preview:false,holdUntil:Date.now()+300000,lastApplied:null};addEvent(state,'Lights off requested (scheduler paused for 5 minutes)');}
  else if(body.action==='finder'){const colors=selectionColors(state.settings.maxAddress,body.start,body.end,body.step,body.color);const e=compile(colors,{maxRun:state.settings.maxRun,brightness:80});await preview(env,state,e,`addresses ${body.start}–${body.end}`);}
- else if(body.action==='pattern'){const p=state.patterns.find(p=>p.id===body.patternId);if(!p)throw new Error('Pattern not found.');await preview(env,state,p.effect,p.name);}
+ else if(body.action==='pattern'){const p=state.patterns.find(p=>p.id===body.patternId);if(!p)throw new Error('Pattern not found.');if(p.wledOnly)throw new Error('This look requires WLED.');await preview(env,state,p.effect,p.name);}
  else throw new Error('Unknown controller action.');
  return {state,revision:await writeState(env,state,revision),message:'Controller request accepted. Verify the result at your house.'};});
 }
 export async function setScheduler(env,enabled){
+ if(isWled(env))return wledScheduler(env,enabled);
  const existing=await readState(env);if(enabled&&existing.state.settings.rollingEnabled)throw new Error('Pause monthly controller sync before enabling the live home-server scheduler.');
  if(!env.LOCAL_RUNNER)throw new Error('Automatic scheduling runs in the home-server container. This hosted app provides the planner.');
  return lease(env,async()=>{const {state,revision}=await readState(env);await trim(env,'update',{switchState:enabled?0:2});state.settings.schedulerEnabled=!!enabled;state.runtime={...state.runtime,lastApplied:null,holdUntil:0,preview:false};addEvent(state,enabled?'Home-server scheduler enabled; native Timer Mode suspended':'Scheduler disabled; native Timer Mode requested');return {state,revision:await writeState(env,state,revision)};});
 }
 export async function tick(env,now=new Date()){
  if(!env.LOCAL_RUNNER)return;
+ if(isWled(env))return wledTick(env,now);
  return lease(env,async()=>{const {state,revision}=await readState(env);
  if(!state.settings.schedulerEnabled){if(state.runtime.preview&&state.runtime.holdUntil<Date.now()){await trim(env,'update',{switchState:2});state.runtime.preview=false;addEvent(state,'Expired preview: Timer Mode requested');await writeState(env,state,revision)}return;}
  if(state.runtime.holdUntil>+now)return;
@@ -67,7 +73,7 @@ export async function tick(env,now=new Date()){
  if(plan?.conflict){state.runtime.lastError='Equal-priority rules conflict. Edit the planner.';await trim(env,'update',{switchState:0});await writeState(env,state,revision);return;}
  const pattern=plan&&state.patterns.find(p=>p.id===plan.rule.patternId);const id=pattern?`${plan.date}:${plan.rule.id}:${JSON.stringify(pattern.effect)}`:`off:${today}`;
  if(state.runtime.lastApplied!==id){
-  if(pattern){const payload=effectPayload(pattern.effect);await trim(env,'update',{switchState:1});try{await trim(env,'effect/preview',payload)}catch(error){try{await trim(env,'update',{switchState:0})}catch{}throw error}addEvent(state,`Scheduled display requested: ${pattern.name}`)}
+  if(pattern){if(pattern.wledOnly)throw new Error('This scheduled look requires WLED.');const payload=effectPayload(pattern.effect);await trim(env,'update',{switchState:1});try{await trim(env,'effect/preview',payload)}catch(error){try{await trim(env,'update',{switchState:0})}catch{}throw error}addEvent(state,`Scheduled display requested: ${pattern.name}`)}
   else{await trim(env,'update',{switchState:0});addEvent(state,'Scheduled lights-off requested')}
   state.runtime={...state.runtime,lastApplied:id,lastTick:now.toISOString(),preview:false,lastError:null};await writeState(env,state,revision);
  }
@@ -76,13 +82,15 @@ export async function tick(env,now=new Date()){
 export async function handleApi(request,env){
  try{
  const path=new URL(request.url).pathname.replace(/^\/api\/?/,'');
+ if(path==='wled-presets'&&request.method==='GET'){if(!isWled(env))throw new Error('Select WLED in Settings first.');return json({presets:await wledPresets(env)})}
+ if(path==='rolling'&&isWled(env))throw new Error('WLED uses the home-server scheduler, not Trimlight calendar uploads.');
  if(path==='rolling'||path==='rolling-backup'){const rolling=await import('./rolling.mjs');if(request.method==='GET')return json(path==='rolling-backup'?await rolling.rollingBackup(env):await rolling.rollingStatus(env));if(request.method==='POST'&&path==='rolling'){const body=await request.json();return json(await rolling.rollingAction(env,body));}}
 
- if(request.method==='GET'&&path==='state'){const r=await readState(env);return json({...r,connected:!!env.TRIMLIGHT_CLIENT_SECRET,localRunner:!!env.LOCAL_RUNNER})}
+ if(request.method==='GET'&&path==='state'){const r=await readState(env);return json({...r,controllerType:env.CONTROLLER_TYPE||'trimlight',connected:isWled(env)?!!env.WLED_URL:!!env.TRIMLIGHT_CLIENT_SECRET,localRunner:!!env.LOCAL_RUNNER})}
  if(request.method==='GET'&&path==='export'){const r=await readState(env);return new Response(JSON.stringify(r.state,null,2),{headers:{...JSON_HEADERS,'content-disposition':'attachment; filename="roofline-studio-backup.json"'}})}
  if(request.method!=='POST')return json({error:'Not found'},404);
  const text=await request.text();if(text.length>1900000)return json({error:'Backup exceeds 1.9 MB. Resize the property photos.'},413);
- const body=JSON.parse(text||'{}');const current=await readState(env);if(current.state.rolling?.status==='running'&&['state','action','scheduler'].includes(path))throw new Error('A controller calendar sync is running. Finish it before editing or previewing.');
+ const body=JSON.parse(text||'{}');const current=await readState(env);if(!isWled(env)&&current.state.rolling?.status==='running'&&['state','action','scheduler'].includes(path))throw new Error('A controller calendar sync is running. Finish it before editing or previewing.');
  if(path==='state'){return await lease(env,async()=>{const {state,revision}=await readState(env);if(body.revision!==revision)return json({error:'This workspace changed. Refresh before saving.'},409);const next=validateState(body.state,state);return json({state:next,revision:await writeState(env,next,revision)})})}
  if(path==='sync')return json(await syncSnapshot(env));
  if(path==='action')return json(await controllerAction(env,body));

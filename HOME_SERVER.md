@@ -49,3 +49,56 @@ The uploader saves a durable write intent before each controller mutation. Each 
 After recovery from a factory reset, use **Accept reset controller**, **Check capacity**, and **Test one design**. The test uploads only the first missing required design, preserves existing designs/calendar entries, and leaves automatic scheduling paused. Verify the design and continued access in the original Trimlight app before requesting a full sync. The test checks one payload only; it does not guarantee that all firmware/API behavior is safe for a bulk upload.
 
 Keep the browser tab open during uploads. Progress counts verified operations, not acknowledgements. The backup export includes the pending request, failure phase, and verified write history (no API credentials). Do not run the original app's editing functions or another uploader concurrently. Mock-controller regression tests cover delayed data, interrupted requests, parsing failures, deletions, configuration mismatches, and final Timer Mode verification; physical-controller validation remains necessary.
+
+## WLED controllers (initial local integration)
+
+Settings → Controller connection now selects **Native Trimlight** or **WLED**.
+Existing installations default to Trimlight. WLED requires this Docker server on
+its LAN; the separately hosted cloud app cannot reach a private controller address.
+Use a reserved private IPv4 URL, such as `http://192.168.1.50`. Hostnames, public
+addresses, redirects, URL credentials and paths are intentionally rejected.
+Test connection reads `/json` only; Test & save selects the provider and pauses
+both app schedulers. Existing Trimlight credentials, library, calendar, maps,
+failed-job diagnostics and backups remain saved. A running sync or active preview
+must finish, and the home-server scheduler must be paused, before switching.
+WLED mode rejects all Trimlight API requests and rolling-calendar operations.
+
+Configure electrical compatibility, chipset, GPIO/output assignments, LED counts,
+color order and power limits in WLED itself. Studio does not modify `/json/cfg`,
+flash firmware, or save/delete WLED presets. Set Studio's logical address count to
+WLED's total configured LED count (up to 2048); WLED addresses are a continuous
+zero-based chain across configured outputs, shown as one-based addresses in Studio.
+The four outputs are configured by WLED, not duplicated Trimlight address ranges.
+
+In Looks library, select **Refresh WLED presets**, then add presets as looks or
+assign a preset to existing looks. Create animations and multi-output segments in
+WLED's own interface and save presets with lights on, brightness and segment bounds.
+Studio plays the preset exactly as saved. Native Trimlight animation numbers are
+never sent as WLED effect IDs. Unmapped animated looks block scheduler activation.
+Presets are references to that controller, not embedded backups; back up WLED
+presets separately. Native WLED animation simulation/editing is not included yet.
+
+Unmapped static Trimlight layouts can play their colors directly. Static playback
+and the bulb finder temporarily replace active segments with one whole-house
+segment, then send RGB colors in sequential batches of at most 256. This allows
+individual/incremental bulb finding without the Trimlight 30-slot transmission
+limit. The existing saved-layout editor still uses its 30-run format. Hardware
+output configuration and saved WLED presets remain unchanged. Select a saved WLED
+preset with segment bounds to restore a multi-segment display. A preview expires
+after two minutes; with scheduling disabled it turns off. End preview / resume app
+schedule clears the preview and lets the enabled runner apply the current rule.
+
+On Evening planner, **Validate looks & enable scheduler** checks all enabled rules
+and preset references. The server evaluates the existing calendar/sunset rules
+approximately every 30 seconds, with date ranges, priorities and overnight endings.
+It sends changes only when the scheduled look changes. There is no two-month WLED
+calendar upload. Disable competing WLED timers and other automation integrations.
+Pausing the Studio runner turns lights off; it does not enable WLED timers. A server
+outage can leave the current display active. A playback error pauses the runner
+and records the error instead of repeatedly attempting writes; check the lights
+and re-enable after resolving it. No hardware validation has been performed yet.
+
+Switching this local server does not alter an independently deployed cloud app or
+its scheduled tasks. Pause any separate Trimlight cloud automation before bench
+work or recovery, and keep the troubled native controller out of further upload
+testing until its vendor guidance is available.
