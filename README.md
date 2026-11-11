@@ -2,6 +2,24 @@
 
 An independent, self-hosted lighting design and scheduling application for compatible Trimlight controllers. Each household runs its own server and supplies its own API credentials through Settings.
 
+<!-- screenshots:start -->
+## Screenshots
+
+Explore the early-access interface for house mapping, pattern design, and calendar-based lighting. Screenshots show simulated roofline placement; controller playback and calendar synchronization require validation against real hardware.
+
+| Pattern library | Evening planner |
+| :-- | :-- |
+| ![Trimlight Home Studio pattern library with categorized roofline previews](docs/screenshots/looks-library.webp) | ![Lighting calendar with nightly designs and sunset-aware planning](docs/screenshots/evening-planner-calendar.webp) |
+
+| House mapper | Pattern workbench |
+| :-- | :-- |
+| ![House photo with editable roofline detection and trace overlays](docs/screenshots/house-mapper.webp) | ![Repeating sequence pattern editor with roofline preview](docs/screenshots/pattern-workbench-sequence.webp) |
+
+[View the complete screenshot gallery](docs/screenshots/README.md), including individual-bulb painting, custom roofline zones, settings, backup and restore, and two-month scheduling.
+
+<sub>Early-access screenshots; selected personal calendar entries and location coordinates are obscured for public release.</sub>
+<!-- screenshots:end -->
+
 ## Features
 - Pattern library with sorting and user-selected protected designs.
 - Native repeating-sequence editing and individual bulb/range/increment painting.
