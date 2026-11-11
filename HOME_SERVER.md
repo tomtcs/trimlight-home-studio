@@ -41,3 +41,11 @@ Sessions expire after eight hours. Logout invalidates the current session; passw
 Accounts, salted scrypt password hashes and hashed session tokens reside in the existing SQLite data volume. Back up the volume, not only the lighting export, to preserve accounts. Keep the named volume when rebuilding. APP_PASSWORD is only used to bootstrap an empty user database.
 
 For HTTPS deployments set COOKIE_SECURE=true in .env so session cookies are HTTPS-only. Leave it unset for local HTTP access. This account system applies to the self-hosted Docker application; the hosted ChatGPT version continues to use its own sign-in system.
+
+### Verified uploader (version 2)
+
+The uploader saves a durable write intent before each controller mutation. Each mutation is followed by a separate shadow refresh, a three-second settling interval, and a full configuration comparison before the next mutation is permitted. A stale result receives up to three refreshed read checks; a parsing error or an uncertain write acknowledgement stops the job immediately. Writes and backup restores are never automatically retried. Old running jobs cannot resume under the new uploader.
+
+After recovery from a factory reset, use **Accept reset controller**, **Check capacity**, and **Test one design**. The test uploads only the first missing required design, preserves existing designs/calendar entries, and leaves automatic scheduling paused. Verify the design and continued access in the original Trimlight app before requesting a full sync. The test checks one payload only; it does not guarantee that all firmware/API behavior is safe for a bulk upload.
+
+Keep the browser tab open during uploads. Progress counts verified operations, not acknowledgements. The backup export includes the pending request, failure phase, and verified write history (no API credentials). Do not run the original app's editing functions or another uploader concurrently. Mock-controller regression tests cover delayed data, interrupted requests, parsing failures, deletions, configuration mismatches, and final Timer Mode verification; physical-controller validation remains necessary.
