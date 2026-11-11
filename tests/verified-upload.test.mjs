@@ -93,3 +93,22 @@ test('read-only recheck never issues a second design save',async()=>{
  const count=calls.length;const result=await rollingAction(env,{action:'recheckUpload',jobId:job.id});
  assert.equal(result.job.status,'complete');assert.deepEqual(calls.slice(count).map(c=>c.path),['notify-update-shadow','get']);
 });
+test('retain unchanged design skips only its pending deletion, without controller writes',async()=>{
+ const {env,calls,getLive}=await fixture();const live=getLive();
+ live.effects=[{id:7,name:'HALLOWEEN',...effectPayload({category:1,mode:0,brightness:100,speed:50,pixels:[{index:0,count:5,color:123,disable:false}]})}];
+ let {job}=await rollingAction(env,{action:'enable'});
+ const row=await env.DB.prepare('SELECT data FROM documents WHERE id=?').bind('rolling-job').first();const j=JSON.parse(row.data);
+ j.status='failed';j.pending={phase:'verifying',path:'effect/delete',payload:{id:7}};
+ await env.DB.prepare('UPDATE documents SET data=? WHERE id=?').bind(JSON.stringify(j),'rolling-job').run();
+ const count=calls.length;
+ const r=await rollingAction(env,{action:'keepDesign',jobId:job.id});
+ assert.equal(r.job.status,'running');assert.equal(r.job.cursor,1);assert.equal(r.state.device.effects[0].name,'HALLOWEEN');assert.deepEqual(calls.slice(count).map(c=>c.path),['notify-update-shadow','get']);
+});
+test('retain rejects other controller changes',async()=>{
+ const {env,getLive}=await fixture();let {job}=await rollingAction(env,{action:'enable'});
+ const row=await env.DB.prepare('SELECT data FROM documents WHERE id=?').bind('rolling-job').first();const j=JSON.parse(row.data);
+ j.ops=[{kind:'deleteEffect',id:7}];j.status='failed';j.pending={phase:'verifying',path:'effect/delete',payload:{id:7}};
+ await env.DB.prepare('UPDATE documents SET data=? WHERE id=?').bind(JSON.stringify(j),'rolling-job').run();
+ getLive().ports=[{id:1,start:1,end:1}];
+ await assert.rejects(rollingAction(env,{action:'keepDesign',jobId:job.id}),/differs/);
+});

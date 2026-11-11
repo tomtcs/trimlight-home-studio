@@ -38,6 +38,21 @@ export async function rollingAction(env,body){return lease(env,async()=>{
   await persist(env,'rolling-job',job);
   return {state:s,revision:nextRevision,job:publicJob(job)};
  }
+ if(body.action==='keepDesign'){
+  const pending=job?.pending,op=job?.ops[job.cursor];
+  if(!job||job.status!=='failed'||job.uploaderVersion!==2||pending?.phase!=='verifying'||pending.path!=='effect/delete'||op?.kind!=='deleteEffect'||pending.payload.id!==op.id||body.jobId!==job.id)throw new Error('No unverified design deletion can be retained.');
+  await refreshShadow(env,s.settings.timezone);const current=await controllerRead(env,s.settings.timezone);
+  if(fingerprint(current)!==fingerprint(job.verifiedDevice)||!current.effects.some(e=>e.id===op.id))throw new Error('Controller differs from the configuration before this deletion. Retention was not accepted.');
+  // Conservative peak usage: do not rely on future deletions to make space.
+  const remaining=job.ops.slice(job.cursor+1).filter(o=>o.kind==='saveEffect').length;
+  if(current.effects.length+remaining>60)throw new Error('Keeping this design could exceed controller capacity. Sync remains paused.');
+  const retained=current.effects.find(e=>e.id===op.id);
+  job.history=[...(job.history||[]),{step:job.cursor,path:'retain-effect',payload:{id:op.id,name:retained.name},verifiedAt:new Date().toISOString()}];
+  job.plan.patternSlots++;job.pending=null;job.error=null;job.cursor++;job.status='running';job.verifiedDevice=current;
+  await persist(env,'rolling-job',job);s.device=current;s.rolling={...publicJob(job),roundMinutes:5};s.settings.rollingEnabled=false;
+  addEvent(s,`Retained ${retained.name}; skipped its deletion. Ready to continue sync.`);
+  return {state:s,revision:await writeState(env,s,revision),job:publicJob(job)};
+ }
  if(body.action==='recheckUpload'){
   if(!job||job.status!=='failed'||job.uploaderVersion!==2||job.pending?.phase!=='verifying'||body.jobId!==job.id)throw new Error('No acknowledged upload is available for a read-only recheck.');
   job.status='running';job.error=null;job.pending.attempts=2;
