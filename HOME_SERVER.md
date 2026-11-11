@@ -3,7 +3,7 @@
 ## Install
 1. Extract the downloadable package on a server with Docker Compose.
 2. Copy `env.example` to `.env` and set `APP_USER` and a unique `APP_PASSWORD` (at least 8 characters). Trimlight credentials do not belong in this file.
-3. Run `docker compose up -d --build` and open `http://YOUR-SERVER:8080`.
+3. Run `docker compose up -d --build` and open `http://YOUR-SERVER:8888`.
 4. Sign in, open **Settings → Trimlight connection**, and enter your API client ID, client secret, then select **Find controllers**. Choose your controller by name and online status; its device ID is filled automatically. You can also paste an ID manually. Discovery does not save credentials or change lighting.
 5. Select **Test connection**, then **Test & save**. Saving also tests the credentials. A blank secret keeps the saved secret only when the client ID is unchanged.
 6. Set your location, latitude, longitude, time zone and logical address count before enabling scheduling. New households start with an empty workspace and scheduling disabled. Existing controller patterns are copied to the library on the first connection; native controller calendars are left unchanged. Import your own workspace backup if migrating an existing installation.
