@@ -20,7 +20,7 @@ async function fixture({stale=0,parseError=false,lostAck=false}={}){
   }
   if(path==='data/backup/get')return Response.json({code:0,payload:{backupKey:'test-backup'}});
   if(path==='effect/save'){old=structuredClone(live);live.effects.push({...body.payload,id:10});written=true;if(lostAck)throw new Error('Connection lost after write');return Response.json({code:0,payload:{id:10}})}
-  if(path==='calendar/save'){live.calendar.push({...body.payload});return Response.json({code:0,payload:{id:body.payload.id}})}
+  if(path==='calendar/save'){old=structuredClone(live);written=true;live.calendar.push({...body.payload});return Response.json({code:0,payload:{id:body.payload.id}})}
   if(path==='effect/delete')live.effects=live.effects.filter(e=>e.id!==body.payload.id);
   if(path==='calendar/delete')live.calendar=live.calendar.filter(c=>c.id!==body.payload.id);
   if(path==='update')live.switchState=body.payload.switchState;
@@ -120,4 +120,25 @@ test('rapid polling waits between reads and tolerates more than three stale snap
  assert.match(job.stage,/Waiting for Trimlight cloud/);
  ({job}=await rollingAction(env,{action:'step',jobId:job.id}));assert.equal(job.status,'complete');
  assert.ok(waits.includes(15000));assert.equal(calls.filter(c=>c.path==='effect/save').length,1);
+});
+
+test('calendar test saves one entry referencing a saved effect without other mutations',async()=>{
+ const {env,calls,getLive}=await fixture();const live=getLive();
+ live.effects=[{id:11,name:'Golden Garland',...effectPayload({category:1,mode:6,brightness:115,speed:35,pixels:[{index:0,count:3,color:16759922,disable:false},{index:1,count:1,color:16751392,disable:false}]})}];
+ live.calendar=[{id:0,effectId:11,startDate:{month:1,day:1},endDate:{month:1,day:1},startTime:{hours:17,minutes:0},endTime:{hours:23,minutes:0}}];
+ const before=structuredClone(live);const date=`${new Date().getUTCFullYear()}-12-31`;
+ let {job}=await rollingAction(env,{action:'testCalendar',date,start:'17:00',end:'23:00',effectId:11});
+ assert.equal(job.total,1);assert.equal(job.testKind,'calendar');
+ while(job.status==='running')({job}=await step(env,job.id));
+ assert.equal(job.status,'complete');assert.deepEqual(live.effects,before.effects);assert.deepEqual(live.calendar[0],before.calendar[0]);assert.equal(live.calendar.length,2);assert.equal(live.calendar[1].id,1);assert.equal(live.calendar[1].effectId,11);
+ assert.equal(calls.filter(c=>c.path==='calendar/save').length,1);assert.ok(!calls.some(c=>['effect/save','effect/delete','calendar/delete','update','data/restore'].includes(c.path)));
+ const state=(await readState(env)).state;assert.equal(state.settings.rollingEnabled,false);assert.equal(state.settings.schedulerEnabled,false);
+});
+
+test('calendar test waits through stale readback without repeating the save',async()=>{
+ const {env,calls,getLive}=await fixture({stale:6});getLive().effects=[{id:11,name:'Existing',...effectPayload({category:1,mode:0,brightness:100,speed:50,pixels:[{index:0,count:1,color:255,disable:false}]})}];
+ let {job}=await rollingAction(env,{action:'testCalendar',date:`${new Date().getUTCFullYear()}-12-31`,start:'17:00',end:'23:00',effectId:11});
+ for(let i=0;i<8;i++)({job}=await rollingAction(env,{action:'step',jobId:job.id}));
+ assert.equal(job.status,'complete');assert.equal(calls.filter(c=>c.path==='calendar/save').length,1);
+ assert.ok(!calls.some(c=>['effect/save','effect/delete','calendar/delete','update'].includes(c.path)));
 });

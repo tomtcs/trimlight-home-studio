@@ -1,3 +1,4 @@
+import {calendarTestPlan} from './calendar-test.mjs';
 import {repairState} from './sync-repair.mjs';
 import {readState,writeState,lease,trim,addEvent} from './service.mjs';
 import {zonedParts,effectPayload,uuid} from './domain.mjs';
@@ -10,7 +11,7 @@ async function persist(env,id,data){await env.DB.prepare('INSERT INTO documents 
 async function refreshShadow(env,tz){const p=zonedParts(new Date(),tz);await trim(env,'notify-update-shadow',undefined,'POST',{currentDate:{year:+p.year-2000,month:+p.month,day:+p.day,weekday:new Date(`${p.year}-${p.month}-${p.day}T12:00:00Z`).getUTCDay()+1,hours:+p.hour,minutes:+p.minute,seconds:+p.second}});await (env.UPLOAD_WAIT||((ms)=>new Promise(resolve=>setTimeout(resolve,ms))))(3000);}
 export async function controllerRead(env,tz){const p=zonedParts(new Date(),tz),currentDate={year:+p.year-2000,month:+p.month,day:+p.day,hours:+p.hour,minutes:+p.minute,seconds:+p.second,weekday:new Date(`${p.year}-${p.month}-${p.day}T12:00:00Z`).getUTCDay()+1};const r=await trim(env,'get',undefined,'POST',{currentDate});const d=r.payload;if(!d||!Array.isArray(d.effects)||!Array.isArray(d.calendar)||d.connectivity!==1)throw new Error('Controller is offline or did not return a usable snapshot. This read could not be verified.');return d;}
 function stepLabel(op){if(!op)return 'Finishing';return ({deleteCalendar:'Removing old calendar entry',deleteEffect:'Archiving unused controller slot',saveEffect:'Saving design: '+(op.pattern?.name||''),saveCalendar:'Saving calendar: '+(op.row?.start||'')+' through '+(op.row?.end||''),verify:'Verifying patterns, calendar, and Timer Mode'})[op.kind]||'Processing controller request'}
-function publicJob(j){if(!j)return null;return {id:j.id,status:j.status,stage:j.pending?'Waiting for Trimlight cloud data to update: '+stepLabel(j.ops[j.cursor])+' · '+(j.pending.attempts||0)+' checks · '+Math.floor((j.pending.elapsedMs||0)/1000)+'s / 180s':stepLabel(j.ops[j.cursor]),window:j.plan.window,calendarSlots:j.plan.calendarSlots,patternSlots:j.plan.patternSlots,cursor:j.cursor,total:j.ops.length,error:j.error||null,completedAt:j.completedAt||null,testMode:!!j.testMode,phase:j.pending?'verify-write':'prepare-write'};}
+function publicJob(j){if(!j)return null;return {id:j.id,status:j.status,stage:j.pending?'Waiting for Trimlight cloud data to update: '+stepLabel(j.ops[j.cursor])+' · '+(j.pending.attempts||0)+' checks · '+Math.floor((j.pending.elapsedMs||0)/1000)+'s / 180s':stepLabel(j.ops[j.cursor]),window:j.plan.window,calendarSlots:j.plan.calendarSlots,patternSlots:j.plan.patternSlots,cursor:j.cursor,total:j.ops.length,error:j.error||null,completedAt:j.completedAt||null,testMode:!!j.testMode,testKind:j.testKind||'design',phase:j.pending?'verify-write':'prepare-write'};}
 export async function rollingStatus(env){const r=await readState(env),job=await document(env,'rolling-job');let plan,error;try{plan=rollingPlan(r.state)}catch(e){error=e.message}return {...r,job:publicJob(job),plan:plan&&{window:plan.window,calendarSlots:plan.calendarSlots,patternSlots:plan.patternSlots,roundMinutes:5},error};}
 export async function rollingAction(env,body){return lease(env,async()=>{
  const r=await readState(env),s=r.state;let revision=r.revision;let job=await document(env,'rolling-job');let readOnlyRecheck=false;
@@ -65,6 +66,7 @@ export async function rollingAction(env,body){return lease(env,async()=>{
  }
  if(body.action==='pause'){if(job?.status==='running')throw new Error('Finish the current sync before pausing.');s.settings.rollingEnabled=false;return {state:s,revision:await writeState(env,s,revision),job:publicJob(job)};}
  if(body.action==='plan'){await refreshShadow(env,s.settings.timezone);const d=await controllerRead(env,s.settings.timezone);const p=rollingPlan(s,new Date(),d);return {window:p.window,calendarSlots:p.calendarSlots,patternSlots:p.patternSlots,removePatterns:p.removeEffects.map(e=>e.name),addPatterns:p.missing.map(p=>p.name),calendarBefore:d.calendar.length,roundMinutes:5};}
+ if(body.action==='testCalendar'){s.settings.rollingEnabled=false;s.settings.schedulerEnabled=false;body={...body,action:'start',testMode:true,testKind:'calendar',force:true};}
  if(body.action==='testDesign'){s.settings.rollingEnabled=false;s.settings.schedulerEnabled=false;body={...body,action:'start',testMode:true,force:true};}
  if(body.action==='enable'){s.settings.rollingEnabled=true;s.settings.schedulerEnabled=false;body={action:'start',force:true};}
  if(body.action==='start'){
@@ -72,7 +74,7 @@ export async function rollingAction(env,body){return lease(env,async()=>{
   if(job?.status==='running')return {job:publicJob(job)};
   if(!body.force&&job?.status==='complete'&&!job.testMode&&job.plan.window.month===windowFor(new Date(),s.settings.timezone).month)return {job:publicJob(job),alreadyCurrent:true};
   if(job?.status==='failed')throw new Error('The last sync failed and was rolled back or needs recovery. Review its error before starting again.');
-  await refreshShadow(env,s.settings.timezone);const before=await controllerRead(env,s.settings.timezone),p=rollingPlan(s,new Date(),before);
+  await refreshShadow(env,s.settings.timezone);const before=await controllerRead(env,s.settings.timezone),p=body.testKind==='calendar'?calendarTestPlan(before,body,s.settings.timezone):rollingPlan(s,new Date(),before);
   if((before.daily||[]).some(x=>x.enable))throw new Error('An enabled daily timer could overlap the rolling calendar. Disable it in Trimlight before syncing.');
   for(const e of before.effects)if(!s.patterns.some(p=>signature({...p.effect,name:p.name})===signature(e)))s.patterns.push({id:'archive-'+uuid(),name:e.name,effect:e,protected:false,source:'Controller archive',updatedAt:new Date().toISOString(),tags:[]});
   // Archive first, then create a vendor restore point before any effect/calendar mutation.
@@ -80,10 +82,10 @@ export async function rollingAction(env,body){return lease(env,async()=>{
   const t=zonedParts(new Date(),s.settings.timezone);const zone=new Intl.DateTimeFormat('en-US',{timeZone:s.settings.timezone,timeZoneName:'short'}).formatToParts(new Date()).find(p=>p.type==='timeZoneName').value;
   await trim(env,'data/backup',{backupTime:`${t.year}-${t.month}-${t.day} ${t.hour}:${t.minute}:${t.second} ${zone}`});
   const backup=await trim(env,'data/backup/get');if(!backup.payload?.backupKey)throw new Error('Could not verify the controller restore point. Nothing was changed.');
-  const ops=body.testMode?(p.missing.length?[{kind:'saveEffect',pattern:p.missing[0]}]:[]):[...before.calendar.map(c=>({kind:'deleteCalendar',id:c.id})),...p.removeEffects.map(e=>({kind:'deleteEffect',id:e.id})),...p.missing.map(e=>({kind:'saveEffect',pattern:e})),...p.rows.map((row,index)=>({kind:'saveCalendar',row,id:index})),{kind:'verify'}];
+  const ops=body.testKind==='calendar'?[{kind:'saveCalendar',row:p.rows[0],id:0}]:body.testMode?(p.missing.length?[{kind:'saveEffect',pattern:p.missing[0]}]:[]):[...before.calendar.map(c=>({kind:'deleteCalendar',id:c.id})),...p.removeEffects.map(e=>({kind:'deleteEffect',id:e.id})),...p.missing.map(e=>({kind:'saveEffect',pattern:e})),...p.rows.map((row,index)=>({kind:'saveCalendar',row,id:index})),{kind:'verify'}];
   if(!ops.length)throw new Error('All required designs already exist on the controller. No test upload is needed.');
   if(job)await persist(env,'rolling-archive-'+job.id,job);
-  job={id,status:'running',uploaderVersion:2,testMode:!!body.testMode,verifiedDevice:before,cursor:0,ops,plan:p,before,backupKey:backup.payload.backupKey,createdAt:new Date().toISOString()};await persist(env,'rolling-job',job);
+  job={id,status:'running',uploaderVersion:2,testMode:!!body.testMode,testKind:body.testKind||'design',verifiedDevice:before,cursor:0,ops,plan:p,before,backupKey:backup.payload.backupKey,createdAt:new Date().toISOString()};await persist(env,'rolling-job',job);
   s.rolling={...publicJob(job),roundMinutes:5};addEvent(s,`Two-month controller sync started: ${p.window.month}`);await writeState(env,s,revision);return {job:publicJob(job)};
  }
  if(body.action!=='step')throw new Error('Unknown rolling-sync action.');
@@ -160,7 +162,7 @@ export async function rollingAction(env,body){return lease(env,async()=>{
    s.snapshotSource='Verified controller upload';
    if(job.testMode){s.settings.rollingEnabled=false;s.settings.schedulerEnabled=false;}
    else s.runtime={...s.runtime,preview:false,lastApplied:null};
-   addEvent(s,job.testMode?'Single design uploaded and readback verified. Check it in the Trimlight app before bulk sync.':'Two-month calendar and Timer Mode verified');
+   addEvent(s,job.testKind==='calendar'?'Single calendar entry saved and verified. Existing entries and designs preserved; Timer Mode was not changed.':job.testMode?'Single design uploaded and readback verified. Check it in the Trimlight app before bulk sync.':'Two-month calendar and Timer Mode verified');
   }
   await persist(env,'rolling-job',job);s.rolling={...publicJob(job),roundMinutes:5};await writeState(env,s,revision);return {job:publicJob(job)};
  }catch(error){

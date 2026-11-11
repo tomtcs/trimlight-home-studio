@@ -4,7 +4,7 @@
 export const CUSTOM_ANIMATIONS = Object.freeze([
   [0, 'Static'], [1, 'Chase forward'], [2, 'Chase backward'],
   [3, 'Chase middle to out'], [4, 'Chase out to middle'],
-  [5, 'Stars (twinkle fade)'], [6, 'Breath (fade)'],
+  [5, 'Stars (twinkle fade)'], [6, 'Fade'],
   [7, 'Comet forward'], [8, 'Comet backward'],
   [9, 'Comet middle to out'], [10, 'Comet out to middle'],
   [11, 'Wave forward'], [12, 'Wave backward'],
