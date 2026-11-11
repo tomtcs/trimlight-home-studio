@@ -45,4 +45,7 @@ This public source snapshot excludes the original household data, credentials, c
 
 This is an independent project, not an official Trimlight product or an endorsed application. Trimlight names and supplied logos remain the property of their respective owners. No trademark rights are granted.
 
-No open-source license has been selected yet. Public source visibility alone does not grant redistribution or modification rights; a license decision is pending before a general open-source release.
+## License
+This project's original source code and documentation are licensed under the **GNU General Public License, version 3 or (at your option) any later version (GPL-3.0-or-later)**. See [LICENSE](LICENSE) for the full license text.
+
+Community members may use, modify, redistribute, and fork the project, subject to the GPL's requirements, including preservation of applicable notices and provision of corresponding source code when required. Independent forks and contributions are welcome. This license does not grant rights to third-party trademarks, branding, or other materials not owned by the project's contributors.
