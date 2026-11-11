@@ -81,6 +81,14 @@ baseline is preserved in workspace exports. A sending entry without a response
 means the outcome is unknown, not that the controller rejected the request.
 
 Existing failed sync jobs and backups remain intact. A separately deployed cloud
-app or automation must be paused separately. For controlled development only,
-CONTROLLER_PROTECTION=off restores the legacy paths; do not disable protection
-on the affected controller while the firmware/API issue remains unresolved.
+app or automation must be paused separately.
+
+Administrators can enable or disable protection under Settings & backup →
+Controller protection. Disabling requires confirmation. Either change pauses
+both app schedulers without sending controller commands; it does not change the
+current light display. End active previews/tests before changing the setting.
+An unfinished sync prevents disabling protection; failed recovery checks remain.
+The preference is stored separately from workspace imports and survives container
+restarts. The saved setting overrides CONTROLLER_PROTECTION; when no setting has
+been saved, protection defaults on unless that legacy variable is explicitly off.
+Disabling protection does not resolve the known controller firmware/API issue.

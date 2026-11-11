@@ -1,8 +1,24 @@
 import {lease,readState,writeState,trim} from './service.mjs';
 export const LIVE_TEST=Symbol('explicit live test');
-export const protectedController=env=>env.CONTROLLER_PROTECTION!=='off';
-export function checkControllerRequest(env,path,payload){
- if(!protectedController(env))return;
+export async function protectedController(env){
+ const row=env.DB&&await env.DB.prepare('SELECT data FROM documents WHERE id=?').bind('controller-protection-setting').first();
+ if(row){const setting=JSON.parse(row.data);return setting.enabled!==false;}
+ return env.CONTROLLER_PROTECTION!=='off';
+}
+export async function setControllerProtection(env,body){return lease(env,async()=>{
+ if(typeof body.enabled!=='boolean')throw new Error('Protection must be enabled or disabled.');
+ if(!body.enabled&&body.confirmDisable!==true)throw new Error('Confirm that disabling protection permits controller writes.');
+ const {state,revision}=await readState(env);
+ if(['waiting','cleanup'].includes(state.protectionTest?.phase)||state.runtime.preview)throw new Error('End the active preview or return to Timer Mode before changing protection.');
+ if(!body.enabled&&state.rolling?.status==='running')throw new Error('An unfinished sync exists. Keep protection enabled until that job is resolved.');
+ state.settings.schedulerEnabled=false;state.settings.rollingEnabled=false;state.runtime={};
+ const next=await writeState(env,state,revision);
+ await env.DB.prepare('INSERT INTO documents (id,data,revision) VALUES (?,?,0) ON CONFLICT(id) DO UPDATE SET data=excluded.data,revision=documents.revision+1').bind('controller-protection-setting',JSON.stringify({enabled:body.enabled})).run();
+ return {state,revision:next,controllerProtected:body.enabled,message:'Controller protection '+(body.enabled?'enabled':'disabled')+'. Both schedulers remain paused. No controller commands were sent.'};
+});}
+
+export async function checkControllerRequest(env,path,payload){
+ if(!await protectedController(env))return;
  if(['get','notify-update-shadow'].includes(path))return;
  if(env[LIVE_TEST]===true&&path==='update'&&Object.keys(payload||{}).length===1&&[0,1,2].includes(payload.switchState))return;
  if(env[LIVE_TEST]===true&&path==='effect/preview'&&JSON.stringify(payload)===JSON.stringify(staticTest()))return;
@@ -13,9 +29,9 @@ export async function recordRequest(env,record){
  if(!env.DB)return;const row=await env.DB.prepare('SELECT data FROM documents WHERE id=?').bind('controller-diagnostics').first();const log=row?JSON.parse(row.data):[];
  log.push({at:new Date().toISOString(),...record});await env.DB.prepare('INSERT INTO documents (id,data,revision) VALUES (?,?,0) ON CONFLICT(id) DO UPDATE SET data=excluded.data,revision=documents.revision+1').bind('controller-diagnostics',JSON.stringify(log.slice(-60))).run();
 }
-export async function diagnostics(env){const row=await env.DB.prepare('SELECT data FROM documents WHERE id=?').bind('controller-diagnostics').first();return {protected:protectedController(env),log:row?JSON.parse(row.data):[]};}
+export async function diagnostics(env){const row=await env.DB.prepare('SELECT data FROM documents WHERE id=?').bind('controller-diagnostics').first();return {protected:await protectedController(env),log:row?JSON.parse(row.data):[]};}
 export async function protectionTest(env,body){
- if(!protectedController(env))throw new Error('Enable controller protection before running these tests.');
+ if(!await protectedController(env))throw new Error('Enable controller protection before running these tests.');
  return lease(env,async()=>{let {state,revision}=await readState(env);state.settings.schedulerEnabled=false;state.settings.rollingEnabled=false;
  const trial={...env,[LIVE_TEST]:true};
  if(body.action==='baseline'){

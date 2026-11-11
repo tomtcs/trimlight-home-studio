@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {protectedController} from '../shared/controller-protection.mjs';
 import {migrateNativeOnly} from './native-migration.mjs';
 import {credentialStore,configureCredentials,credentialsApi} from './credentials.mjs';
 import fs from 'node:fs';
@@ -39,5 +40,5 @@ let running=false;
 async function heartbeat(){if(running)return;running=true;try{await tick(env)}catch(e){console.error('Scheduler:',e.message)}finally{running=false}}
 server.listen(Number(process.env.PORT||8888),'0.0.0.0',()=>{console.log('Trimlight Home Studio is listening on port '+(process.env.PORT||8888));heartbeat()});
 const timer=setInterval(heartbeat,30000);
-async function shutdown(){clearInterval(timer);try{const {state}=await readState(env);if(env.CONTROLLER_PROTECTION==='off'&&(state.settings.schedulerEnabled||state.runtime.preview))await trim(env,'update',{switchState:2})}catch(e){console.error('Could not restore Timer Mode:',e.message)}server.close(()=>process.exit(0));setTimeout(()=>process.exit(0),35000).unref()}
+async function shutdown(){clearInterval(timer);try{const {state}=await readState(env);if(!await protectedController(env)&&(state.settings.schedulerEnabled||state.runtime.preview))await trim(env,'update',{switchState:2})}catch(e){console.error('Could not restore Timer Mode:',e.message)}server.close(()=>process.exit(0));setTimeout(()=>process.exit(0),35000).unref()}
 process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);
