@@ -16,7 +16,7 @@ export function rollingPlan(state,now=new Date(),device=state.device){
   const last=rows.at(-1);if(last&&last.patternId===row.patternId&&JSON.stringify(last.startTime)===JSON.stringify(row.startTime)&&JSON.stringify(last.endTime)===JSON.stringify(row.endTime))last.end=key;else rows.push(row);
  }
  if(rows.length>60)throw new Error(`This window needs ${rows.length} calendar slots; only 60 are available. Combine designs or use fixed start times. Nothing was changed.`);
- const wanted=[...new Set([...rows.map(r=>r.patternId),...state.patterns.filter(p=>p.protected).map(p=>p.id)])].map(id=>{const p=state.patterns.find(p=>p.id===id);if(!p)throw new Error('Missing library pattern');if(p.wledOnly)throw new Error(`${p.name} requires WLED and cannot be uploaded to Trimlight.`);effectPayload(p.effect);return p});
+ const wanted=[...new Set([...rows.map(r=>r.patternId),...state.patterns.filter(p=>p.protected).map(p=>p.id)])].map(id=>{const p=state.patterns.find(p=>p.id===id);if(!p)throw new Error('Missing library pattern');effectPayload(p.effect);return p});
  const keep=new Set(device.effects.filter(e=>(e.category===1&&(e.mode>16||e.pixels.some(p=>p.count>60)))||state.patterns.some(p=>p.protected&&effectSignature(p.effect)===effectSignature(e))).map(e=>e.id));
  // Keep all references, even disabled daily timers, so no dangling controller links are introduced.
  for(const d of device.daily||[])if(d.effectId!==200)keep.add(d.effectId);

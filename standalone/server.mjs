@@ -1,4 +1,5 @@
 import http from 'node:http';
+import {migrateNativeOnly} from './native-migration.mjs';
 import {credentialStore,configureCredentials,credentialsApi} from './credentials.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -7,7 +8,7 @@ import {openDatabase} from './database.mjs';
 import {handleApi,tick,trim,readState} from '../shared/service.mjs';
 const dataDir=process.env.DATA_DIR||'/data';fs.mkdirSync(dataDir,{recursive:true});
 const env={...process.env,DB:openDatabase(path.join(dataDir,'roofline.sqlite')),LOCAL_RUNNER:true};
-const credentials=credentialStore(dataDir);configureCredentials(env,credentials);
+const credentials=credentialStore(dataDir);configureCredentials(env,credentials);await migrateNativeOnly(env,credentials);
 let auth;try{auth=await createAuth(env.DB.sqlite,process.env)}catch(e){console.error(e.message);process.exit(1)}
 const types={'.html':'text/html; charset=utf-8','.js':'application/javascript','.css':'text/css','.svg':'image/svg+xml','.zip':'application/zip','.png':'image/png','.ico':'image/x-icon'};
 const server=http.createServer(async(req,res)=>{
@@ -38,5 +39,5 @@ let running=false;
 async function heartbeat(){if(running)return;running=true;try{await tick(env)}catch(e){console.error('Scheduler:',e.message)}finally{running=false}}
 server.listen(Number(process.env.PORT||8080),'0.0.0.0',()=>{console.log('Trimlight Home Studio is listening on port '+(process.env.PORT||8080));heartbeat()});
 const timer=setInterval(heartbeat,30000);
-async function shutdown(){clearInterval(timer);try{const {state}=await readState(env);if(env.CONTROLLER_TYPE!=='wled'&&(state.settings.schedulerEnabled||state.runtime.preview))await trim(env,'update',{switchState:2})}catch(e){console.error('Could not restore Timer Mode:',e.message)}server.close(()=>process.exit(0));setTimeout(()=>process.exit(0),35000).unref()}
+async function shutdown(){clearInterval(timer);try{const {state}=await readState(env);if(state.settings.schedulerEnabled||state.runtime.preview)await trim(env,'update',{switchState:2})}catch(e){console.error('Could not restore Timer Mode:',e.message)}server.close(()=>process.exit(0));setTimeout(()=>process.exit(0),35000).unref()}
 process.on('SIGTERM',shutdown);process.on('SIGINT',shutdown);
